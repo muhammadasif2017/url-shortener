@@ -562,9 +562,60 @@ so asserting the attributes is what actually catches a mis-scoped deletion.
     than discover as a flaky failure later.
   - 237 tests still pass and `npm run typecheck` is clean. Nothing reads or
     writes this table yet; that is E3.
-- [ ] **E3. Fire-and-forget writer** — synchronous registration into the pending
-      set before the response flushes, mandatory `.catch()`, loop-until-empty
-      `drainPendingWrites()`
+- [x] **E3. Fire-and-forget writer** — done
+  - Acceptance: a redirect writes one click row without the handler awaiting it,
+    the write is registered before the response is written, a failed insert
+    cannot reach the process as an unhandled rejection, and
+    `drainPendingWrites()` is deterministic for tests.
+  - Verify: redirect three times, drain, count three rows. Force an insert
+    failure and confirm the process survives and the redirect still answers.
+  - Verified: 272 tests pass, 35 of them new, and `npm run typecheck` is clean.
+  - **`RequestContext` had no client IP, which blocked the whole task.** The
+    resolver was called inside the rate-limiting branch in `server.ts`, and a
+    route handler cannot reach the socket by design. The address is now resolved
+    once per request, above that branch, and passed on the context, with the
+    limiter reading the same value. Resolving it twice is how two features that
+    must agree on who a caller is start disagreeing, which is the exact failure
+    the single-resolver rule exists to prevent.
+  - **Deviation from the spec as written, and the spec was updated to match.**
+    E1 said the redirect handler attaches the mandatory `.catch()` at the call
+    site. `recordClick()` now returns `void` and catches internally instead. A
+    rule that every call site must remember is a rule that one call site will
+    eventually forget, and forgetting it takes the process down. Returning
+    `void` removes the failure mode rather than documenting it.
+  - The tracker stores the already-caught promise, not the original. Registering
+    the raw promise and catching a separate reference would leave the drain
+    awaiting a rejecting promise, so one failed insert would fail the entire
+    shutdown. `createWriteTracker()` is exported as a factory so both mandatory
+    properties are unit tested without a database: a rejecting write still
+    drains cleanly, and a write registered while the drain is already running is
+    still waited for, which is what proves the loop is not a snapshot.
+  - Hashing lives in `src/lib/ipHash.ts` and takes the salt as an argument
+    rather than reading configuration, so the unit tests need no environment.
+    Salt first, then the address, because appending a secret to attacker-supplied
+    input is the length-extension shape and writing it the safe way costs
+    nothing.
+  - `UNKNOWN_CLIENT_IP` is hashed like any other value, so every unresolvable
+    visitor shares one digest and counts as one visitor. That is the same
+    distortion `TRUST_PROXY_HOPS` already causes and it is now stated in the
+    code rather than left implicit. `ip_hash` is `not null`, so storing null was
+    never an option.
+  - Truncation happens before the insert, and the integration test proves it: a
+    4000-character referrer produces a stored row of exactly 2048 characters
+    instead of a constraint violation that would lose the click silently.
+  - The salt fingerprint is logged at startup as `ipHashSalt`, eight hex
+    characters of `sha256(IP_HASH_SALT)`. The salt itself is never logged. A
+    unit test asserts the fingerprint changes when the salt changes, rather than
+    asserting it is not a prefix of the salt, which would have tested a property
+    of `sha256` instead of this code.
+  - One integration test was written and then deleted rather than left in. It
+    claimed to prove the write is registered before the response is answered,
+    but the only assertion it could make deterministically was
+    `pendingWriteCount() >= 0`, which is true of everything. The ordering
+    property is structural, since `recordClick()` is synchronous, and the
+    tracker's behaviour is unit tested directly.
+  - Not done here: the shutdown wiring at `src/index.ts:79` is E4, and the
+    comment marking that step is left in place.
 - [ ] **E4. Wire the drain into shutdown** in the correct order
 - [ ] **E5. Stats endpoint** — total and per-day breakdown, counts converted
       with `Number()` at the repository boundary

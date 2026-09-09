@@ -2,6 +2,7 @@ import type { Server } from 'node:http';
 
 import { env } from './config/env.ts';
 import { closePool } from './db/pool.ts';
+import { saltFingerprint } from './lib/ipHash.ts';
 import { describeError, log } from './lib/logger.ts';
 import { identityRoutes } from './modules/identity/identity.routes.ts';
 import { linkRoutes } from './modules/links/links.routes.ts';
@@ -38,6 +39,12 @@ function main(): void {
       port: config.port,
       env: config.nodeEnv,
       baseUrl: config.baseUrl,
+
+      // A digest of the salt, never the salt. Rotating IP_HASH_SALT resets
+      // unique-visitor counts, so this is what makes a discontinuity in those
+      // numbers explainable later: same fingerprint means the salt did not
+      // change and the drop was real traffic.
+      ipHashSalt: saltFingerprint(config.ipHashSalt),
     });
   });
 

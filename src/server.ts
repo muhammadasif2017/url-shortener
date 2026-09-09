@@ -198,15 +198,18 @@ export function createAppServer(
       return;
     }
 
-    if (isRateLimited(url.pathname)) {
-      const clientIp = resolveClientIp(
-        {
-          forwardedFor: request.headers['x-forwarded-for'],
-          remoteAddress: request.socket.remoteAddress,
-        },
-        config.trustProxyHops,
-      );
+    // Resolved once, for every request, and then passed down. The limiter and
+    // analytics both need it, and resolving it twice is how two features that
+    // must agree on who a caller is start disagreeing.
+    const clientIp = resolveClientIp(
+      {
+        forwardedFor: request.headers['x-forwarded-for'],
+        remoteAddress: request.socket.remoteAddress,
+      },
+      config.trustProxyHops,
+    );
 
+    if (isRateLimited(url.pathname)) {
       const limiter = CREDENTIAL_PATHS.has(url.pathname) ? authRateLimiter : rateLimiter;
       const decision = limiter.check(clientIp);
       if (!decision.allowed) {
@@ -248,6 +251,7 @@ export function createAppServer(
       params: match.params,
       query: url.searchParams,
       headers: request.headers,
+      clientIp,
       ...(body === undefined ? {} : { body }),
     };
 

@@ -41,6 +41,16 @@ export type RequestContext = {
   /** Lowercased request headers, as Node supplies them. */
   readonly headers: Readonly<Record<string, string | string[] | undefined>>;
   /**
+   * Address to attribute this request to, from the shared resolver.
+   *
+   * Resolved once per request and passed down, so a handler never reaches for
+   * the socket or reads `X-Forwarded-For` itself. Rate limiting and
+   * unique-visitor counting therefore cannot drift apart, which is the failure
+   * the single-resolver rule in `SPEC.md` exists to prevent. May be the literal
+   * `unknown` when no address could be determined.
+   */
+  readonly clientIp: string;
+  /**
    * Parsed JSON request body, or `undefined` for a request that carries none.
    * Untrusted and of unknown shape: every handler validates before use.
    */

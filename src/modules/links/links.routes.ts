@@ -4,6 +4,7 @@ import type { RequestContext, RouteResponse, RouteTable } from '../../http/conte
 import { json, noContent, redirect } from '../../http/respond.ts';
 import { AppError } from '../../lib/AppError.ts';
 import { parseBoundedInteger } from '../../lib/validate.ts';
+import * as analyticsService from '../analytics/analytics.service.ts';
 import * as identityService from '../identity/identity.service.ts';
 import { parseCreateLinkInput, type Link } from './links.schema.ts';
 import * as linkService from './links.service.ts';
@@ -120,6 +121,20 @@ export const linkRoutes: RouteTable = [
     async handle(context): Promise<RouteResponse> {
       const slug = context.params['slug'] ?? '';
       const link = await linkService.resolveSlug(slug);
+
+      // Started here, deliberately not awaited, and registered synchronously
+      // before this handler returns and the response is written. A visitor
+      // never pays for the analytics write, and a database that is slow or
+      // unreachable cannot turn a working redirect into a failure.
+      //
+      // `recordClick` returns void and cannot throw, so there is no promise for
+      // this call site to mishandle. See `analytics.service.ts`.
+      analyticsService.recordClick({
+        linkId: link.id,
+        clientIp: context.clientIp,
+        referrer: context.headers['referer'],
+        userAgent: context.headers['user-agent'],
+      });
 
       // 302, not 301. A permanent redirect is cached by browsers forever, which
       // makes a mistyped destination unfixable and hides every later visit from

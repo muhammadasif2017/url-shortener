@@ -73,9 +73,12 @@ mandatory.
 
 1. **The promise must never reject unhandled.** An unhandled rejection
    terminates a modern Node process by default, which would mean an analytics
-   write taking down the whole service. Every fire-and-forget call attaches a
-   `.catch()` that logs and swallows. That `.catch()` is not optional and is not
-   a style preference.
+   write taking down the whole service. A `.catch()` that logs and swallows is
+   therefore mandatory, and it is attached inside the module rather than by each
+   caller. `recordClick()` returns `void`, not a promise, so there is nothing at
+   a call site to forget: the failure mode is removed rather than documented.
+   The write tracker also stores the already-caught promise, so a rejection can
+   reach neither the process nor the drain.
 2. **Events can be lost, and that is accepted.** A crash or a restart between
    the response and the insert drops the event. Click counts are therefore a
    lower bound, not an exact figure. This must be stated wherever the numbers
@@ -441,9 +444,10 @@ per Project Structure in `SPEC.md`:
   read.
 - `analytics.routes.ts` — the two endpoints.
 
-`recordClick()` is called from the redirect handler in `links.routes.ts`. That
-is the one place the layering rule is worth restating: the redirect handler does
-not `await` it, and it attaches the mandatory `.catch()` at the call site.
+`recordClick()` is called from the redirect handler in `links.routes.ts`,
+before the handler returns, so the write is registered before the response is
+written. It returns `void` and cannot throw or reject, so the handler has no
+promise to mishandle and the redirect cannot fail because of analytics.
 
 `drainPendingWrites()` is exported for two callers and no others: the shutdown
 sequence in `src/index.ts`, at step 3, and the integration tests.
@@ -508,8 +512,8 @@ Integration tests, each against a real server and a real database:
 - `npm run typecheck` passes with zero errors.
 - Migration `004_create_click_events.sql` applies to an empty database and
   creates every constraint and the index listed in the data model.
-- The redirect handler does not `await` the click write and attaches a
-  `.catch()`.
+- The redirect handler does not `await` the click write, and `recordClick()`
+  returns `void` so no call site can leak an unhandled rejection.
 - `drainPendingWrites()` is wired into shutdown at step 3, after in-flight
   requests and before the pool closes, with a 5 second deadline.
 - No raw IP address is stored anywhere, and the salt is not logged.
