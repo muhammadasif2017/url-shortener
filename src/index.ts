@@ -3,6 +3,7 @@ import type { Server } from 'node:http';
 import { env } from './config/env.ts';
 import { closePool } from './db/pool.ts';
 import { describeError, log } from './lib/logger.ts';
+import { linkRoutes } from './modules/links/links.routes.ts';
 import { createAppServer } from './server.ts';
 
 /**
@@ -25,7 +26,11 @@ const DRAIN_TIMEOUT_MS = 10_000;
  */
 function main(): void {
   const config = env();
-  const server = createAppServer();
+
+  // Every module's routes are assembled here, in one visible list, rather than
+  // registered by import side effects. A route that exists only because a file
+  // was imported is a route nobody can find later.
+  const server = createAppServer(linkRoutes);
 
   server.listen(config.port, () => {
     log('info', 'server listening', {

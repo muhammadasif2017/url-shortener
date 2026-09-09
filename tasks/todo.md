@@ -198,7 +198,7 @@ Rules for every task below:
 
 ## Phase B — links module
 
-- [ ] **B1. `POST /api/links`**
+- [x] **B1. `POST /api/links`** — done
   - Acceptance: 201 with slug, `shortUrl`, url, `expiresAt`, `createdAt`.
     Custom slug honoured. Reserved slug returns 400. Duplicate returns 409 via
     SQLSTATE `23505`. Generated-slug collisions retry five times, then 503 with
@@ -206,36 +206,70 @@ Rules for every task below:
   - Verify: integration tests for 201, custom slug, 400 reserved, 409 duplicate,
     400 for a `javascript:` URL, and 413 for a 20 KB body.
   - Files: `links.routes.ts`, `links.service.ts`, `links.repository.ts`,
-    `tests/integration/links.test.ts`
+    `links.schema.ts`, `tests/integration/links.test.ts`
+  - Verified: 14 integration tests. Includes one proving a duplicate surfaces as
+    409 rather than 500, one proving a reserved slug is 400 rather than 409, and
+    one proving a failed validation stores nothing.
+  - `isSlugConflict` checks the constraint name as well as SQLSTATE 23505. Once
+    identity adds `unique (email)`, a bare code check would report a duplicate
+    email as a slug collision.
+  - The internal id is never exposed. A sequential id would tell any caller how
+    many links exist and let them walk the whole table.
 
-- [ ] **B2. `GET` and `HEAD /:slug`**
+- [x] **B2. `GET` and `HEAD /:slug`** — done
   - Acceptance: 302 with `Location` and `Cache-Control: no-store`. 404 unknown,
     410 expired, expiry evaluated in SQL against `now()`. `HEAD` returns the
     same status and headers with no body. Not rate limited.
   - Verify: integration tests using `redirect: 'manual'` for 302, 404, 410, and
     a `HEAD` request asserting an empty body.
+  - Verified: 9 tests, including case-sensitive slug matching, `Cache-Control:
+    no-store`, and two proving the catch-all does not swallow `/health` or
+    `/api/links`.
 
-- [ ] **B3. `GET /api/links/:slug`**
+- [x] **B3. `GET /api/links/:slug`** — done
   - Acceptance: 200 with metadata, 404 otherwise. An expired link is still
     returned here with its past `expiresAt`.
   - Verify: integration test confirming the same slug gives 410 on the redirect
     route and 200 here.
+  - Verified: 3 tests. The expired-link case asserts both routes in one test, so
+    the distinction cannot silently collapse.
 
-- [ ] **B4. `GET /api/links` with keyset pagination**
+- [x] **B4. `GET /api/links` with keyset pagination** — done
   - Acceptance: `limit` 1 to 100 defaulting to 20, cursor is base64url of the
     last `id`, `where id < $1 order by id desc`. Malformed cursor returns 400.
     Route gated behind `ENABLE_UNAUTHENTICATED_LINK_ADMIN`.
   - Verify: integration test paging five links with `limit=2`, asserting no
     duplicates and no missing rows, and a null `nextCursor` on the last page.
     Second test: route returns 404 without the flag.
+  - Verified: 5 tests. Pagination walks all three pages and asserts the exact
+    sequence, so a skipped or repeated row fails rather than passing quietly.
+  - The flag-off case was verified by smoke test rather than by an automated
+    test: the configuration is read once per process, so toggling it needs a
+    separate process. Task C4 adds that test properly.
+  - Listing asks for `limit + 1` rows to learn whether another page exists. A
+    separate count query would be a second round trip that could disagree with
+    the first.
 
-- [ ] **B5. `DELETE /api/links/:slug`**
+- [x] **B5. `DELETE /api/links/:slug`** — done
   - Acceptance: 204 when deleted, 404 otherwise. Gated behind the same flag.
   - Verify: integration test for 204, then 404 on both routes; and 404 for the
     route itself without the flag.
+  - Verified: 2 tests, plus the same smoke test as B4 for the flag-off case.
 
-**Checkpoint B.** Every `SPEC-links.md` verification item passes. `pg` is still
-the only production dependency.
+**Checkpoint B — PASSED, with one item deferred.** 178 tests pass, 133 unit and
+45 integration. `pg` is still the only production dependency.
+
+Deferred to Phase C by design: the rate-limiting verification items, since the
+limiter does not exist yet. Everything else in `SPEC-links.md` is covered.
+
+Verified during this phase and worth carrying forward:
+
+- Integration tests now run with `--test-concurrency=1`. Node runs test files in
+  parallel processes by default, and two files truncating the same table
+  interfered with each other, producing failures that looked like routing bugs.
+- The production entry point mounts `linkRoutes` explicitly. Until that was
+  wired, every endpoint existed and passed its tests while being unreachable in
+  the real server.
 
 ---
 
