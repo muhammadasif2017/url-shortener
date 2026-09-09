@@ -510,11 +510,17 @@ Integration tests, each against a real server and a real database:
   referrers endpoint.
 - Deleting a link removes its click events, proving the cascade. The stats
   endpoint then returns 404 for that slug.
-- Shutdown drains: a redirect issued immediately before `SIGTERM` is present in
-  the database after the process exits. **Not verifiable on this machine.**
-  Windows does not deliver a real `SIGTERM`, which is already recorded against
-  task C2 in `tasks/todo.md`. Run this on Linux, in the container, before
-  relying on the drain.
+- Shutdown drains, in order. The sequence lives in `src/shutdown.ts` and is
+  called directly by `tests/integration/shutdown.test.ts`: a click write left
+  outstanding is in the database after `performShutdown` returns, and a request
+  that arrives while step 1 is still waiting also has its click recorded, which
+  is the case a drain placed before step 1 would miss. A failing step returns
+  exit code 1 rather than reporting a clean shutdown.
+- The signal path itself is **not verifiable on this machine.** Windows does not
+  deliver a real `SIGTERM`, which is already recorded against task C2 in
+  `tasks/todo.md`, so what a test can reach here is the sequence rather than the
+  handler that calls it. Run the signal case on Linux, in the container, before
+  relying on it.
 
 ## Definition of Done
 

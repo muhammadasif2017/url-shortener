@@ -635,7 +635,33 @@ so asserting the attributes is what actually catches a mis-scoped deletion.
     comment marking that step is left in place. E4 needs its own 5 second
     constant rather than reusing `DRAIN_TIMEOUT_MS`, which is 10 seconds and
     belongs to the in-flight request wait.
-- [ ] **E4. Wire the drain into shutdown** in the correct order
+- [x] **E4. Wire the drain into shutdown** in the correct order — done
+  - Acceptance: on `SIGTERM` the order is stop accepting, wait for in-flight
+    requests, drain click writes, close the pool, exit, with every step bounded.
+  - Verify: a click write left outstanding is in the database after the sequence
+    returns, and a request that arrives while step 1 is still waiting also has
+    its click recorded.
+  - Verified: 276 tests pass, 3 of them new, and `npm run typecheck` is clean.
+  - **The sequence moved to `src/shutdown.ts` so it could be tested at all.** It
+    was inside `src/index.ts`, which calls `main()` on import and would start a
+    listener in any test that imported it. `performShutdown` now returns an exit
+    code instead of calling `process.exit`, and the entry point exits on what it
+    returns. That one change is what makes the ordering assertable.
+  - The click drain has its own constant, `CLICK_DRAIN_TIMEOUT_MS` at 5 seconds,
+    rather than reusing the 10 second request wait. The two are not the same
+    kind of wait: a request still running has a caller waiting for an answer, a
+    click write has nobody, and losing one is already accepted.
+  - The ordering test is the one worth keeping. It issues a redirect while step
+    1 is still waiting on a controllable stand-in server, so the click write is
+    registered *after* the shutdown began. A drain placed before step 1 returns
+    over an empty set and that row never exists.
+  - A failing step returns exit code 1. Without that a broken shutdown exits 0
+    and looks exactly like a clean one.
+  - **What is still not verified here.** The signal handler itself. Windows does
+    not deliver a real `SIGTERM`, so a test can reach the sequence but not the
+    path from the signal to it. That wiring is two lines in `src/index.ts` and
+    the container runs the process as PID 1 with exec form, so it receives the
+    signal directly on Linux. Verify there, alongside the C2 note.
 - [ ] **E5. Stats endpoint** — total and per-day breakdown, counts converted
       with `Number()` at the repository boundary
 - [ ] **E6. Top referrers**
