@@ -6,8 +6,11 @@ import { parseBoundedInteger } from '../../lib/validate.ts';
 import * as identityService from '../identity/identity.service.ts';
 import * as analyticsService from './analytics.service.ts';
 import {
+  DEFAULT_REFERRER_LIMIT,
   DEFAULT_WINDOW_DAYS,
+  MAX_REFERRER_LIMIT,
   MAX_WINDOW_DAYS,
+  MIN_REFERRER_LIMIT,
   MIN_WINDOW_DAYS,
 } from './analytics.schema.ts';
 
@@ -53,6 +56,25 @@ function windowDays(context: RequestContext): number {
   return parsed.value;
 }
 
+/**
+ * Reads the `limit` query parameter.
+ *
+ * @param context - The request.
+ * @returns How many referrers to return.
+ * @throws {AppError} 400 `VALIDATION_FAILED` when it is not a whole number in
+ *   range, with a field-level detail.
+ */
+function referrerLimit(context: RequestContext): number {
+  const parsed = parseBoundedInteger(context.query.get('limit') ?? undefined, 'limit', {
+    min: MIN_REFERRER_LIMIT,
+    max: MAX_REFERRER_LIMIT,
+    fallback: DEFAULT_REFERRER_LIMIT,
+  });
+
+  if (!parsed.ok) throw AppError.validation(parsed.issues);
+  return parsed.value;
+}
+
 /** Every route this module serves. */
 export const analyticsRoutes: RouteTable = [
   {
@@ -67,6 +89,21 @@ export const analyticsRoutes: RouteTable = [
       );
 
       return json(200, stats);
+    },
+  },
+  {
+    method: 'GET',
+    path: '/api/links/:slug/referrers',
+    async handle(context): Promise<RouteResponse> {
+      const userId = await requireUserId(context);
+      const referrers = await analyticsService.readLinkReferrers(
+        context.params['slug'] ?? '',
+        userId,
+        windowDays(context),
+        referrerLimit(context),
+      );
+
+      return json(200, referrers);
     },
   },
 ];

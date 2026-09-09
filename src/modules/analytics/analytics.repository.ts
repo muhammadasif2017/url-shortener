@@ -1,5 +1,10 @@
 import { pool } from '../../db/pool.ts';
-import type { ClickTotals, DailyClicks, NewClickEvent } from './analytics.schema.ts';
+import type {
+  ClickTotals,
+  DailyClicks,
+  NewClickEvent,
+  ReferrerCount,
+} from './analytics.schema.ts';
 
 /**
  * SQL for click events, and nothing else.
@@ -144,4 +149,52 @@ export async function readClicksByDay(linkId: string, days: number): Promise<Dai
   );
 
   return result.rows.map((row) => ({ date: row.date, clicks: Number(row.clicks) }));
+}
+
+/** One referrer group, before conversion. */
+type ReferrerRow = {
+  readonly referrer: string | null;
+  readonly clicks: string;
+};
+
+/**
+ * Ranks the sources of traffic for one link over a window.
+ *
+ * Grouping happens inside a row set the index has already narrowed to one link
+ * and one window, which is why `referrer` carries no index of its own: an index
+ * on high-cardinality, attacker-supplied text would cost a write on every click
+ * to serve one grouped read.
+ *
+ * The range predicate on `occurred_at` is what makes that narrowing possible.
+ * See {@link readClicksByDay} for the measurement.
+ *
+ * Ties break on the referrer itself, ascending, so two sources with equal
+ * counts come back in the same order on every call rather than in whatever
+ * order the database happened to produce. Postgres sorts nulls last under
+ * `asc`, so direct traffic loses a tie, which is a stable rule rather than an
+ * accident.
+ *
+ * @param linkId - The link.
+ * @param days - Window length, in whole UTC days, ending today.
+ * @param limit - Most rows to return.
+ * @returns The ranked referrers, counts converted at this boundary.
+ */
+export async function readTopReferrers(
+  linkId: string,
+  days: number,
+  limit: number,
+): Promise<ReferrerCount[]> {
+  const result = await pool().query<ReferrerRow>(
+    `select referrer, count(*) as clicks
+     from click_events
+     where link_id = $1
+       and not is_bot
+       and occurred_at >= ${WINDOW_START}
+     group by referrer
+     order by clicks desc, referrer asc
+     limit $3`,
+    [linkId, days, limit],
+  );
+
+  return result.rows.map((row) => ({ referrer: row.referrer, clicks: Number(row.clicks) }));
 }

@@ -9,6 +9,7 @@ import {
   MAX_REFERRER_LENGTH,
   MAX_USER_AGENT_LENGTH,
   type ClickInput,
+  type LinkReferrers,
   type LinkStats,
   type NewClickEvent,
 } from './analytics.schema.ts';
@@ -373,4 +374,27 @@ export async function readLinkStats(
   ]);
 
   return { slug: link.slug, windowDays, ...totals, byDay };
+}
+
+/**
+ * Reads where one link's traffic came from.
+ *
+ * @param slug - The link to report on.
+ * @param userId - The authenticated caller, who must own it.
+ * @param windowDays - Window length in whole UTC days, ending today.
+ * @param limit - Most referrers to return.
+ * @returns The ranked referrers.
+ * @throws {AppError} 404 for an unknown slug, 403 for a link the caller does
+ *   not own.
+ */
+export async function readLinkReferrers(
+  slug: string,
+  userId: string,
+  windowDays: number,
+  limit: number,
+): Promise<LinkReferrers> {
+  const link = await requireOwnedLink(slug, userId);
+  const referrers = await repository.readTopReferrers(link.id, windowDays, limit);
+
+  return { slug: link.slug, windowDays, referrers };
 }

@@ -98,3 +98,34 @@ export type LinkStats = ClickTotals & {
   /** One entry per day in the window, oldest first, including zeros. */
   readonly byDay: readonly DailyClicks[];
 };
+
+/** Fewest referrers a caller may ask for. */
+export const MIN_REFERRER_LIMIT = 1;
+
+/** Most referrers a caller may ask for. */
+export const MAX_REFERRER_LIMIT = 50;
+
+/** Number of referrers returned when the caller asks for none. */
+export const DEFAULT_REFERRER_LIMIT = 10;
+
+/** One source of traffic, and how much of it there was. */
+export type ReferrerCount = {
+  /**
+   * The `Referer` header as sent, truncated, or `null` for direct traffic.
+   *
+   * Null rather than a label such as "direct", because a site could name itself
+   * that and become indistinguishable from visitors who arrived with no
+   * referrer at all.
+   */
+  readonly referrer: string | null;
+  readonly clicks: number;
+};
+
+/** What the referrers endpoint reports. */
+export type LinkReferrers = {
+  readonly slug: string;
+  /** Window these figures cover, in whole UTC days, ending today. */
+  readonly windowDays: number;
+  /** Ranked most to least, bot rows excluded. */
+  readonly referrers: readonly ReferrerCount[];
+};

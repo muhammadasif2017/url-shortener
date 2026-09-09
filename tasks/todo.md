@@ -718,7 +718,31 @@ so asserting the attributes is what actually catches a mis-scoped deletion.
     and the series disagree by one. That is consistent with a module whose
     figures are already a lower bound, and a snapshot would buy agreement
     between two approximate numbers.
-- [ ] **E6. Top referrers**
+- [x] **E6. Top referrers** — done
+  - Acceptance: `GET /api/links/:slug/referrers` ranks sources over the same
+    window rules, owner-only, with a `limit` of 1 to 50 defaulting to 10, bot
+    rows excluded and direct traffic reported as null.
+  - Verify: two visits from one site and one from another rank in that order;
+    a visit with no `Referer` reports `null`; the same four authorisation
+    answers as the statistics endpoint.
+  - Verified: 302 tests pass, 11 of them new, and `npm run typecheck` is clean.
+  - Ties break on the referrer ascending, so two equal counts come back in the
+    same order on every call rather than in whatever order the database
+    produced. Postgres sorts nulls last under `asc`, so direct traffic loses a
+    tie by a stated rule rather than by accident. A test reads the endpoint
+    twice and compares.
+  - Direct traffic stays `null` rather than becoming a label such as "direct",
+    because a site could name itself that and be indistinguishable from visitors
+    who arrived with no referrer at all.
+  - The query reuses `WINDOW_START`, so the same range predicate keeps the
+    grouping inside a row set the index has already narrowed. That is the whole
+    justification for `referrer` carrying no index of its own, and it holds only
+    because the predicate is sargable, which E5 measured.
+  - Authorisation is `requireOwnedLink`, shared with the statistics endpoint, so
+    there is one ownership rule in the module rather than two that can drift.
+  - A test sends a 4000-character referrer and asserts the stored value is 2048
+    characters, proving truncation still protects the fire-and-forget insert on
+    this path.
 
 **Checkpoint E.** After `drainPendingWrites()`, the click count equals the
 number of redirects performed in the test.
