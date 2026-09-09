@@ -30,7 +30,7 @@ Rules for every task below:
     does reject `enum` with `TS1294`, so the constraint in `SPEC.md` is enforced
     rather than merely documented.
 
-- [ ] **A2. Slug generation and reserved words**
+- [x] **A2. Slug generation and reserved words** — done
   - Acceptance: `generateSlug()` returns 7 base62 characters from
     `crypto.randomBytes`, rejecting bytes at or above 248.
     `isReservedSlug()` matches case-insensitively.
@@ -38,8 +38,11 @@ Rules for every task below:
     across many samples, and case-insensitive reserved matching.
   - Files: `src/lib/slug.ts`, `tests/unit/slug.test.ts`
   - Note: pure functions, no database and no HTTP. Build this first.
+  - Verified: 8 tests pass. The distribution test uses a 10% tolerance, and a
+    naive `byte % 62` was measured at 23.8% drift on this machine, so the test
+    discriminates rather than passing vacuously.
 
-- [ ] **A3. Validation primitives and link input parsing**
+- [x] **A3. Validation primitives and link input parsing** — done
   - Acceptance: shared narrowing helpers plus `parseCreateLinkInput`. URL rules
     from `SPEC-links.md`: parses, `http:` or `https:` only, has a host, 2048
     characters or fewer, and host does not match `BASE_URL`.
@@ -48,20 +51,35 @@ Rules for every task below:
     malformed date, and a self-referential URL.
   - Files: `src/lib/validate.ts`, `src/modules/links/links.schema.ts`,
     `tests/unit/validate.test.ts`
+  - Verified: 29 tests pass.
+  - Design note: parsing returns a `ParseResult` and throws nothing, so one
+    response reports every bad field instead of only the first. Converting a
+    failed result into an HTTP response belongs to task A8.
 
-- [ ] **A4. Config and environment validation**
+- [x] **A4. Config and environment validation** — done
   - Acceptance: `env.ts` reads and validates every variable from the table in
     `SPEC.md`, and throws on startup when one is missing or malformed.
   - Verify: unit test asserting a missing required variable throws, and that
     defaults apply for optional ones.
   - Files: `src/config/env.ts`, `tests/unit/env.test.ts`
+  - Verified: 12 tests pass.
+  - Added beyond the acceptance criteria: `loadEnv` refuses to start when
+    `ENABLE_UNAUTHENTICATED_LINK_ADMIN` is set while `NODE_ENV` is production.
+    The flag exposes routes that let anyone enumerate every link and delete any
+    of them, and a copied env file is exactly how such a flag reaches
+    production. It also rejects the placeholder salt from `.env.example`.
 
-- [ ] **A5. Client IP resolver**
+- [x] **A5. Client IP resolver** — done
   - Acceptance: `TRUST_PROXY_HOPS` of 0 uses `socket.remoteAddress`; above 0
     counts from the right-hand end of `X-Forwarded-For`. Strips the
     IPv4-mapped IPv6 prefix, lowercases IPv6, returns `unknown` for undefined.
   - Verify: unit tests including a forged left-hand entry that must be ignored.
   - Files: `src/lib/clientIp.ts`, `tests/unit/clientIp.test.ts`
+  - Verified: 16 tests pass, including a 20-entry forged header that must not
+    reach past the single trusted entry.
+  - Fixed during the task: the first version of the test helper collapsed an
+    explicit `undefined` back to a default with `??`, so the destroyed-socket
+    case silently tested nothing. The helper now checks key presence with `in`.
 
 - [ ] **A6. Router with precedence rules**
   - Acceptance: first-wins ordered matching, literal routes before parameter
