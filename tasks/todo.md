@@ -461,8 +461,107 @@ so asserting the attributes is what actually catches a mis-scoped deletion.
 
 ## Phase E — analytics module
 
-- [ ] **E1. Complete `SPEC-analytics.md`** — resolve the three open questions
-- [ ] **E2. `click_events` table** — migration `004`, cascade on link delete
+- [x] **E1. Complete `SPEC-analytics.md`** — done
+  - Acceptance: the file is no longer a placeholder. Objective and Scope are
+    final rather than provisional, the three open questions are resolved with
+    their reasoning recorded, and the data model, endpoints, verification list,
+    and definition of done exist for E2 to E6 to build against.
+  - Verify: `SPEC-analytics.md` has the same sections as its two siblings, and
+    every task from E2 to E6 has something in it to implement.
+  - **Aggregation is SQL, pinned to UTC, bounded, and dense.** `date_trunc`
+    with a `group by`, because counting raw rows in JavaScript transfers the
+    whole history to produce a few numbers and gets slower as a link gets more
+    popular. The zone is written into the query as
+    `date_trunc('day', occurred_at at time zone 'UTC')` rather than inherited
+    from the server's `TimeZone`, which the Compose database and the deployed
+    database can set differently — the same mistake as tying database TLS to
+    `NODE_ENV` in C3. The window is a `days` parameter, 1 to 90, default 30,
+    because an unbounded breakdown grows a row per day forever. Days with no
+    clicks come back as zeros, because a sparse series makes every consumer
+    rebuild the calendar and makes a gap read as continuity.
+  - One index, `(link_id, occurred_at desc)`, serves all four queries. What is
+    deliberately not indexed is written down with the reason: `referrer`,
+    `ip_hash`, and `is_bot`.
+  - **Retention: none, until a link is deleted.** Scope already rejected a
+    scheduled rollup job because a scheduler is a whole subsystem to add before
+    it is needed, and that reasoning covers scheduled deletion unchanged. The
+    cost is recorded, and so is the trigger for revisiting: ten million rows,
+    or storage becoming a visible line on the bill.
+  - **Salt rotation: no schedule.** Rotate only on suspected disclosure.
+    Rotating on a calendar corrupts unique-visitor counts at every rotation to
+    reduce the value of a hash nobody can reverse without the salt. Rotations
+    are made explainable without a new table: the service logs the salt's
+    fingerprint, the first eight hex characters of `sha256(IP_HASH_SALT)`, at
+    startup. The salt itself is never logged.
+  - **Gap found while writing this, and closed.** The three open questions did
+    not mention authorisation, and nothing in the spec said who may read a
+    link's statistics. Answering on the slug alone would have handed every
+    link's click history to anyone who can guess a slug, which is the same
+    disclosure class as the admin routes C4 closed. Statistics are now
+    owner-only and reuse the exact rule `deleteLink` implements: 404 for an
+    unknown slug, 403 for someone else's link or an ownerless one, 401 with no
+    session.
+  - Three smaller gaps closed at the same time. The user-agent bot check that
+    Scope keeps in scope is now defined, and a bot click is stored and flagged
+    rather than dropped, because dropping it makes a crawler wave and a
+    collapse in real traffic look identical afterwards. Referrer and user agent
+    are nullable with length checks, and the service truncates before insert,
+    because a constraint violation on a fire-and-forget insert loses the click
+    in silence. The IP hash had no reader — unique visitors are now reported by
+    the stats endpoint, so the one reason the hash exists is served.
+  - Two claims in the draft were checked against the code rather than assumed.
+    The router does express a literal segment after a parameter and matches only
+    on an equal segment count, so the four-segment stats paths cannot collide
+    with `/:slug` or with `/api/links/:slug`. The error code for a bad `days`
+    value is `VALIDATION_FAILED`, through the existing `AppError.validation`,
+    not a new code invented for this module.
+  - Recorded under Risks: while `TRUST_PROXY_HOPS` is `0`, every visitor hashes
+    identically behind a proxy and `uniqueVisitors` reads 1. That number is
+    wrong rather than imprecise until C5 deploys and sets the hop count.
+- [x] **E2. `click_events` table** — migration `004`, cascade on link delete
+  - Acceptance: `004_create_click_events.sql` applies to both databases and
+    creates every column, constraint, and the one index listed in the data
+    model in `SPEC-analytics.md`.
+  - Verify: apply it, then read the constraints back out of `pg_constraint` and
+    the index out of `pg_indexes`, and prove each constraint actually rejects
+    the value it exists to reject.
+  - Verified against the live schema rather than by reading the file back.
+    Applied to the development and test databases, `migrate:status` lists all
+    four migrations, and `pg_constraint` reports the primary key, the cascading
+    foreign key, and the three check constraints. `pg_indexes` reports
+    `click_events_link_id_occurred_at_idx` on `(link_id, occurred_at desc)`.
+  - Each constraint was exercised, not just inspected. A 3-character `ip_hash`,
+    a 2049-character referrer, and a 513-character user agent are each rejected
+    with SQLSTATE `23514`; a `link_id` that does not exist is rejected with
+    `23503`. Deleting the parent link removed its click row, so the cascade
+    works rather than merely being declared.
+  - `referrer` and `user_agent` are nullable and default to nothing, so an
+    absent header stores as null instead of an empty string. `occurred_at`
+    defaults to `now()` and `is_bot` to `false`, both confirmed from
+    `information_schema.columns`.
+  - The length checks are backstops, not the enforcement point. The service
+    truncates before inserting, because the insert is fire-and-forget: a
+    constraint violation there loses the click in silence rather than
+    surfacing. The comment in the migration says so, so a later reader does not
+    mistake the constraint for the whole rule.
+  - No new SQLSTATE handling is needed in `links`, and the first reason written
+    here was wrong. A foreign-key violation is `23503`, a different code from
+    the `23505` the collision check looks at, so it could never have been
+    misread as a slug collision. The real reason is narrower: nothing in the
+    links repository writes to `click_events`, so `23503` never reaches those
+    paths at all. The helper is `isSlugConflict` in
+    `src/modules/links/links.repository.ts`, not `isUniqueViolation`, and it
+    does check `error.constraint === 'links_slug_unique'` alongside the code,
+    which is what keeps a duplicate email from being answered with 409
+    `SLUG_TAKEN`.
+  - Test cleanup already covers the new table. `truncateLinks` in
+    `tests/helpers/db.ts` runs `truncate table links restart identity cascade`,
+    and `cascade` extends to every table with a foreign key into `links`, so
+    click rows cannot leak between test files once E3 starts writing them.
+    Checkpoint E asserts a count, so that mattered enough to check now rather
+    than discover as a flaky failure later.
+  - 237 tests still pass and `npm run typecheck` is clean. Nothing reads or
+    writes this table yet; that is E3.
 - [ ] **E3. Fire-and-forget writer** — synchronous registration into the pending
       set before the response flushes, mandatory `.catch()`, loop-until-empty
       `drainPendingWrites()`
