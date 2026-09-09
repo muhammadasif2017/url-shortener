@@ -1,7 +1,7 @@
 import type { AddressInfo } from 'node:net';
 
 import type { RouteTable } from '../../src/http/context.ts';
-import { createAppServer } from '../../src/server.ts';
+import { createAppServer, type ServerOptions } from '../../src/server.ts';
 
 /**
  * Test helper for driving the real server over real HTTP.
@@ -38,10 +38,16 @@ export type TestServer = {
  * with each other or with a development server already running on 3000.
  *
  * @param routes - Module routes to mount alongside the built-in health route.
+ * @param options - Server overrides, such as a smaller rate limit. Each call
+ *   builds its own limiter, so one test file's request count never affects
+ *   another's.
  * @returns The running server.
  */
-export async function startTestServer(routes: RouteTable = []): Promise<TestServer> {
-  const server = createAppServer(routes);
+export async function startTestServer(
+  routes: RouteTable = [],
+  options: ServerOptions = {},
+): Promise<TestServer> {
+  const server = createAppServer(routes, options);
 
   await new Promise<void>((resolve) => {
     server.listen(0, '127.0.0.1', resolve);

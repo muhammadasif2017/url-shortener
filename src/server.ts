@@ -8,10 +8,12 @@ import {
   notFoundResponse,
   toErrorResponse,
 } from './http/errorHandler.ts';
+import { createRateLimiter } from './http/rateLimit.ts';
 import { readJsonBody } from './http/readBody.ts';
 import { json, send } from './http/respond.ts';
 import { createRouter } from './http/router.ts';
 import { AppError } from './lib/AppError.ts';
+import { resolveClientIp } from './lib/clientIp.ts';
 
 /**
  * Server assembly.
@@ -53,6 +55,22 @@ const healthRoutes: RouteTable = [
 ];
 
 /**
+ * Decides whether a path is subject to rate limiting.
+ *
+ * The redirect route is exempt, and deliberately so. It is the product, and one
+ * shared office behind a single address must not be able to exhaust it for
+ * everyone there. The health route is exempt because a platform polls it far
+ * more often than any human uses the API, and a rate-limited health check would
+ * report the service as unhealthy under its own monitoring.
+ *
+ * @param pathname - The request path.
+ * @returns `true` when the limiter applies.
+ */
+function isRateLimited(pathname: string): boolean {
+  return pathname.startsWith('/api/');
+}
+
+/**
  * Rejects a promise that takes too long.
  *
  * A query against an unreachable database can hang for as long as the network
@@ -79,16 +97,38 @@ async function withTimeout<T>(work: Promise<T>, milliseconds: number): Promise<T
   }
 }
 
+/** Options for assembling the server. */
+export type ServerOptions = {
+  /**
+   * Rate limit overrides.
+   *
+   * Present so a test can build a server with a deliberately small limit
+   * without lowering it for the whole process. The limiter holds state, and one
+   * shared across every test file would make each file's request count depend
+   * on which files ran first.
+   */
+  readonly rateLimit?: { readonly max: number; readonly windowMs: number };
+};
+
 /**
  * Builds the HTTP server.
  *
  * @param moduleRoutes - Routes contributed by feature modules. The health route
  *   is always included.
+ * @param options - Overrides, used by tests.
  * @returns A server that is not listening yet.
  */
-export function createAppServer(moduleRoutes: RouteTable = []): Server {
+export function createAppServer(
+  moduleRoutes: RouteTable = [],
+  options: ServerOptions = {},
+): Server {
   const router = createRouter([...healthRoutes, ...moduleRoutes]);
   const config = env();
+
+  const rateLimiter = createRateLimiter({
+    max: options.rateLimit?.max ?? config.rateLimitMax,
+    windowMs: options.rateLimit?.windowMs ?? config.rateLimitWindowMs,
+  });
 
   const server = createServer((request, response) => {
     void handle(request, response).catch((error: unknown) => {
@@ -127,6 +167,32 @@ export function createAppServer(moduleRoutes: RouteTable = []): Server {
     if (match.type === 'method-not-allowed') {
       send(response, methodNotAllowedResponse(match.allow), method);
       return;
+    }
+
+    if (isRateLimited(url.pathname)) {
+      const clientIp = resolveClientIp(
+        {
+          forwardedFor: request.headers['x-forwarded-for'],
+          remoteAddress: request.socket.remoteAddress,
+        },
+        config.trustProxyHops,
+      );
+
+      const decision = rateLimiter.check(clientIp);
+      if (!decision.allowed) {
+        send(
+          response,
+          toErrorResponse(
+            new AppError('RATE_LIMITED', 'Too many requests.', 429, {
+              headers: { 'Retry-After': String(decision.retryAfterSeconds) },
+            }),
+            { method, path: url.pathname },
+          ),
+          method,
+        );
+        if (!request.readableEnded) request.resume();
+        return;
+      }
     }
 
     let body: unknown;
