@@ -1,0 +1,16 @@
+# Normalise line endings.
+#
+# Without this, git warns "LF will be replaced by CRLF" on every add on Windows,
+# and a file's endings depend on whoever last touched it. Text files are stored
+# with LF in the repository and checked out with the platform's convention.
+* text=auto eol=lf
+
+# Shell scripts and SQL run inside Linux containers. CRLF would make a shell
+# script fail with a confusing "not found" on its interpreter line.
+*.sh text eol=lf
+*.sql text eol=lf
+
+# Never touched by normalisation.
+*.png binary
+*.jpg binary
+*.ico binary

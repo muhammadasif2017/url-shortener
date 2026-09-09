@@ -21,6 +21,24 @@ export type LogLevel = (typeof LEVELS)[number];
 export type LogFields = Record<string, unknown>;
 
 /**
+ * Whether log output is suppressed.
+ *
+ * Tests that deliberately exercise a failure path write real error lines, which
+ * bury the test runner's own output and make a passing run look like a broken
+ * one. Suppressing them under `NODE_ENV=test` keeps the signal readable.
+ *
+ * `LOG_IN_TESTS=1` turns output back on, because the first thing wanted when
+ * debugging a failing test is the logs it produced.
+ *
+ * This reads `process.env` directly, which no other module may do. Routing it
+ * through `config/env.ts` would make every unit test need a fully valid
+ * environment just to import a module that logs.
+ */
+function isSuppressed(): boolean {
+  return process.env['NODE_ENV'] === 'test' && process.env['LOG_IN_TESTS'] !== '1';
+}
+
+/**
  * Writes one structured log line.
  *
  * @param level - Severity.
@@ -29,6 +47,8 @@ export type LogFields = Record<string, unknown>;
  * @param fields - Structured context.
  */
 export function log(level: LogLevel, message: string, fields: LogFields = {}): void {
+  if (isSuppressed()) return;
+
   const line = JSON.stringify({
     level,
     time: new Date().toISOString(),
