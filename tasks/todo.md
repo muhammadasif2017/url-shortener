@@ -13,12 +13,22 @@ Rules for every task below:
 
 ## Phase A — Foundation
 
-- [ ] **A1. Repository scaffold**
+- [x] **A1. Repository scaffold** — done
   - Acceptance: `package.json` with `"type": "module"` and every npm script from
     `SPEC.md`. `tsconfig.json` exactly as specified. `.nvmrc` pinned to
     `22.15.0`. `.env.example` listing every variable in the environment table.
-  - Verify: `npm run typecheck` exits 0 on an empty `src/`.
-  - Files: `package.json`, `tsconfig.json`, `.nvmrc`, `.env.example`
+  - Verify: `npm run typecheck` exits 0, and `node --experimental-strip-types
+    src/index.ts` runs.
+  - Files: `package.json`, `tsconfig.json`, `.nvmrc`, `.env.example`,
+    `src/index.ts`
+  - Note: the original verify step said "exits 0 on an empty `src/`", which is
+    impossible. `tsc` fails with `TS18003: No inputs were found in config file`
+    when every `include` path is empty. A placeholder `src/index.ts` was added
+    instead, which proves more: type checking, Node's runtime type stripping,
+    and the npm scripts all work end to end. Task A11 replaces it.
+  - Confirmed on this machine: TypeScript 5.9.3, and `erasableSyntaxOnly` really
+    does reject `enum` with `TS1294`, so the constraint in `SPEC.md` is enforced
+    rather than merely documented.
 
 - [ ] **A2. Slug generation and reserved words**
   - Acceptance: `generateSlug()` returns 7 base62 characters from

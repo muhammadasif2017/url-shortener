@@ -1,0 +1,33 @@
+{
+  "name": "url-shortener",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A URL shortener API built on the Node.js standard library",
+  "type": "module",
+  "engines": {
+    "node": ">=22.15.0 <23"
+  },
+  "scripts": {
+    "dev": "node --watch --env-file=.env --experimental-strip-types src/index.ts",
+    "start": "node --env-file-if-exists=.env --experimental-strip-types src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "pretest": "npm run migrate:test",
+    "test": "node --test --env-file=.env.test --experimental-strip-types \"tests/**/*.test.ts\"",
+    "test:watch": "node --test --watch --env-file=.env.test --experimental-strip-types \"tests/**/*.test.ts\"",
+    "test:coverage": "node --test --experimental-test-coverage --env-file=.env.test --experimental-strip-types \"tests/**/*.test.ts\"",
+    "migrate": "node --env-file-if-exists=.env --experimental-strip-types scripts/migrate.ts up",
+    "migrate:test": "node --env-file=.env.test --experimental-strip-types scripts/migrate.ts up",
+    "migrate:status": "node --env-file=.env --experimental-strip-types scripts/migrate.ts status",
+    "migrate:new": "node --experimental-strip-types scripts/migrate.ts new",
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down"
+  },
+  "dependencies": {
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/pg": "^8.11.10",
+    "typescript": "^5.8.3"
+  }
+}
