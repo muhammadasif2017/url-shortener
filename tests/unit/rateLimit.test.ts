@@ -99,6 +99,60 @@ describe('eviction', () => {
     );
   });
 
+  it('does not let a flood of new keys clear a key that is at the limit', () => {
+    // The attack this protects against: a victim is being brute forced, and the
+    // attacker sends one request from each of many addresses to push the
+    // victim's window out of the map. Under insertion-order eviction the
+    // victim's next attempt started a fresh window and the limit never fired.
+    const limiter = createRateLimiter({ max: 3, windowMs: 60_000, maxEntries: 10 });
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      limiter.check('victim', START);
+    }
+    assert.equal(limiter.check('victim', START).allowed, false, 'victim should be limited');
+
+    for (let index = 0; index < 100; index += 1) {
+      limiter.check(`flood-${index}`, START);
+    }
+
+    assert.ok(limiter.size() <= 10, `cap broke: ${limiter.size()} entries`);
+    assert.equal(
+      limiter.check('victim', START).allowed,
+      false,
+      'the flood cleared the limited window',
+    );
+  });
+
+  it('drops the soonest-expiring window once every tracked key is at the limit', () => {
+    // The same attack, paid for in full: every flood key is pushed to the limit
+    // so the protected map fills and eviction has nothing cheap left to take.
+    // The victim's window is the newest of the protected entries here, so
+    // insertion order would take it first and soonest expiry does not.
+    const limiter = createRateLimiter({ max: 3, windowMs: 60_000, maxEntries: 4 });
+
+    for (let index = 0; index < 3; index += 1) {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        limiter.check(`flood-${index}`, START);
+      }
+    }
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      limiter.check('victim', START + 1000);
+    }
+    assert.equal(limiter.check('victim', START + 1000).allowed, false);
+
+    // Nothing is under the limit, so this new key can only be admitted by
+    // evicting a protected one.
+    limiter.check('newcomer', START + 1000);
+
+    assert.ok(limiter.size() <= 4, `cap broke: ${limiter.size()} entries`);
+    assert.equal(
+      limiter.check('victim', START + 1000).allowed,
+      false,
+      'the victim was evicted while an earlier-expiring window survived',
+    );
+  });
+
   it('evicts the oldest entry when the cap is reached', () => {
     const limiter = createRateLimiter({ max: 1, windowMs: 60_000, maxEntries: 2 });
 

@@ -215,13 +215,17 @@ removed rather than left as a switch that could be turned back on.
 ## Status
 
 All five phases are complete: foundation, links, hardening, identity, and
-analytics. 302 tests pass and `npm run typecheck` is clean.
+analytics. 315 tests pass and `npm run typecheck` is clean.
+
+A threat model of the running service is in
+[`THREAT-MODEL.md`](THREAT-MODEL.md), with the findings it produced ranked and
+the three already fixed marked as such.
 
 The service is **not deployed**, deliberately. Criterion 19 in `SPEC.md` is the
 only one that requires a public URL, and running locally is enough for what this
 project is for. Everything a deployment needs is in the repository: the
-Dockerfile, a separate `DATABASE_SSL` setting, and migrations as a pre-deploy
-step. The graceful `SIGTERM` path is verified in the container, since Windows
+Dockerfile, a separate `DATABASE_SSL` setting with a `DATABASE_CA_CERT` bundle
+to verify the database certificate against, and migrations as a pre-deploy step. The graceful `SIGTERM` path is verified in the container, since Windows
 cannot deliver that signal.
 
 Progress and the reasoning behind each decision are in

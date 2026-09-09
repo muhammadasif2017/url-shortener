@@ -91,12 +91,25 @@ const ALLOWED_PROTOCOLS: ReadonlySet<string> = new Set(['http:', 'https:']);
  * caller-supplied URL from the server is server-side request forgery, and no
  * feature is worth introducing it.
  *
+ * What is returned is the parser's own serialization, not the caller's string.
+ * The two differ, and the difference is the bug this closes: the WHATWG parser
+ * strips tab, carriage return and newline while parsing, so a value carrying
+ * them parses cleanly while the original still holds them. Returning the
+ * original stored a string that had never been validated in the form it was
+ * stored, and that string is later emitted as a `Location` header. Node refuses
+ * a header value containing control characters, so the link simply broke on
+ * every visit rather than splitting the response, but a value nobody checked
+ * reaching a response header is the class of mistake, not that outcome.
+ *
+ * The visible cost is normalization: `http://example.com` comes back as
+ * `http://example.com/`. That is the same URL.
+ *
  * @param value - The candidate, straight from the request body.
  * @param options.field - Field name to use in any issue produced.
  * @param options.baseUrl - This service's own public base URL. A destination on
  *   the same host is rejected, because it creates a redirect chain, and a link
  *   pointing at its own short URL creates a loop.
- * @returns The URL string, unchanged, or the reasons it was rejected.
+ * @returns The normalized URL, or the reasons it was rejected.
  */
 export function parseDestinationUrl(
   value: unknown,
@@ -135,7 +148,16 @@ export function parseDestinationUrl(
     ]);
   }
 
-  return ok(value);
+  // Length is checked again on the serialized form. Normalization can lengthen a
+  // URL, by percent-encoding a character the caller sent raw, and the column
+  // constraint applies to what is stored rather than to what arrived.
+  if (parsed.href.length > MAX_URL_LENGTH) {
+    return fail([
+      issue(field, `Must be ${MAX_URL_LENGTH} characters or fewer.`),
+    ]);
+  }
+
+  return ok(parsed.href);
 }
 
 /**
