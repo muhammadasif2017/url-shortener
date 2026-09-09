@@ -614,8 +614,27 @@ so asserting the attributes is what actually catches a mis-scoped deletion.
     `pendingWriteCount() >= 0`, which is true of everything. The ordering
     property is structural, since `recordClick()` is synchronous, and the
     tracker's behaviour is unit tested directly.
+  - **The pending set was unbounded, and now is not.** The redirect route is
+    exempt from rate limiting on purpose, so it is the one path where
+    unauthenticated traffic can grow something without limit, and it now starts
+    a database write per hit against a pool of ten connections. The cap is
+    10,000 outstanding writes, the same number and the same reasoning as the
+    rate limiter's entry cap in C1. Above it a click is dropped rather than
+    queued, which point 2 of the fire-and-forget decision already permits.
+  - The tracker takes a function rather than a promise, so a refused write is
+    never started. Taking a promise and discarding it would still have issued
+    the insert, which is exactly the load the cap exists to shed. A unit test
+    asserts the third write of a limit-2 tracker neither runs nor is stored.
+  - Shedding logs on the edges, not per click: once when it starts, once when
+    the backlog clears, with the number dropped. A service already failing to
+    keep up with its writes does not need a log line per request on top.
+  - `npm run test:unit` was run on its own as well as through `npm test`. It has
+    no `--env-file`, so a unit test that reached configuration would fail there
+    and pass in the full run. It passes: 184 tests.
   - Not done here: the shutdown wiring at `src/index.ts:79` is E4, and the
-    comment marking that step is left in place.
+    comment marking that step is left in place. E4 needs its own 5 second
+    constant rather than reusing `DRAIN_TIMEOUT_MS`, which is 10 seconds and
+    belongs to the in-flight request wait.
 - [ ] **E4. Wire the drain into shutdown** in the correct order
 - [ ] **E5. Stats endpoint** — total and per-day breakdown, counts converted
       with `Number()` at the repository boundary

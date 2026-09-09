@@ -130,7 +130,7 @@ describe('createWriteTracker', () => {
     // The promise stored must be one that already has a catch attached.
     // Registering the raw promise would make a single failed insert fail the
     // whole shutdown drain.
-    tracker.track(Promise.reject(new Error('insert failed')));
+    tracker.track(() => Promise.reject(new Error('insert failed')));
 
     await tracker.drain();
     assert.equal(tracker.size(), 0);
@@ -145,13 +145,13 @@ describe('createWriteTracker', () => {
       releaseFirst = resolve;
     });
 
-    tracker.track(first);
+    tracker.track(() => first);
 
     const drained = tracker.drain();
 
     // Added after the drain started, which a single pass over a snapshot of the
     // set would miss entirely.
-    tracker.track(
+    tracker.track(() =>
       first.then(async () => {
         await new Promise((resolve) => setTimeout(resolve, 10));
         secondFinished = true;
@@ -168,10 +168,29 @@ describe('createWriteTracker', () => {
   it('reports nothing outstanding once writes settle', async () => {
     const tracker = createWriteTracker();
 
-    tracker.track(Promise.resolve());
+    tracker.track(() => Promise.resolve());
     assert.equal(tracker.size(), 1);
 
     await tracker.drain();
     assert.equal(tracker.size(), 0);
+  });
+
+  it('refuses a write once the limit is reached, without starting it', () => {
+    const tracker = createWriteTracker({ limit: 2 });
+    let started = 0;
+
+    const start = (): Promise<void> => {
+      started += 1;
+      return new Promise<void>(() => undefined);
+    };
+
+    assert.equal(tracker.track(start), true);
+    assert.equal(tracker.track(start), true);
+    assert.equal(tracker.track(start), false);
+
+    // The refused write never ran. Accepting the promise and discarding it
+    // would still have issued the insert, which is the load the cap sheds.
+    assert.equal(started, 2);
+    assert.equal(tracker.size(), 2);
   });
 });

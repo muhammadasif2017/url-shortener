@@ -116,6 +116,18 @@ mandatory.
    definition. Every failed click insert logs at error level with the link id
    and the database error code, so a systematic failure does not look like an
    absence of traffic.
+6. **The pending set is capped, and sheds when full.** The redirect route is
+   deliberately not rate limited, so it is the one path where unauthenticated
+   traffic can grow something without bound. The pool holds ten connections, so
+   a burst queues writes faster than they drain. The cap is 10,000 outstanding
+   writes, matching the rate limiter's hard cap for the same class of memory
+   exhaustion. Above it, a click is dropped rather than queued, and the write is
+   never started: accepting the promise and discarding it would still issue the
+   insert, which is the load being shed. Dropping is consistent with point 2,
+   which already accepts that events are lost. Shedding is logged at warn on the
+   first drop and again when the backlog clears, with a count, rather than once
+   per dropped click, because a service failing to keep up does not need a log
+   line per request as well.
 
 ## Decision: statistics are owner-only
 
