@@ -81,7 +81,7 @@ Rules for every task below:
     explicit `undefined` back to a default with `??`, so the destroyed-socket
     case silently tested nothing. The helper now checks key presence with `in`.
 
-- [ ] **A6. Router with precedence rules**
+- [x] **A6. Router with precedence rules** — done
   - Acceptance: first-wins ordered matching, literal routes before parameter
     routes, segment count must match, `HEAD` matches `GET` entries, and a path
     that exists with a different method returns 405 with `Allow`.
@@ -90,13 +90,29 @@ Rules for every task below:
   - Files: `src/http/router.ts`, `src/http/context.ts`,
     `tests/unit/router.test.ts`
   - Note: this is the single most likely source of subtle bugs in the project.
+  - Verified: 22 tests pass. The test table registers `/:slug` FIRST on purpose,
+    so a router that relied on registration order would fail every precedence
+    test rather than passing by luck.
+  - Added beyond the acceptance criteria: `createRouter` throws on two routes
+    that could serve the same request, including two that differ only in
+    parameter name such as `/api/links/:slug` and `/api/links/:id`. Without the
+    check, the second handler is silently unreachable.
 
-- [ ] **A7. Body reader with a hard size limit**
+- [x] **A7. Body reader with a hard size limit** — done
   - Acceptance: streams the request body, rejects over 16 KB, rejects an
     oversized `Content-Length` up front, and calls `req.resume()` after
     responding so the response reaches the client cleanly.
   - Verify: unit test asserting the stream is destroyed after at most 16 KB.
   - Files: `src/http/readBody.ts`, `tests/unit/readBody.test.ts`
+  - Verified: 16 tests pass. One counts the bytes actually pulled from the
+    stream while feeding a megabyte in 64 KB chunks, which proves the limit
+    stops reading rather than measuring after buffering.
+  - Also covered: a lying `Content-Length` does not slip past, a malformed one
+    falls back to streaming, and the limit counts bytes rather than characters,
+    so a body of multi-byte characters cannot exceed it four times over.
+  - Deviation: `req.resume()` after responding belongs to the server wiring in
+    task A11, not here. This module destroys the stream instead, which is the
+    correct action while the response has not yet been written.
 
 - [ ] **A8. Response helpers, errors, logger, cookies**
   - Acceptance: `json()`, `redirect()`, `noContent()`. `AppError` with code,
