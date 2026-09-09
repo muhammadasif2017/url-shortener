@@ -342,12 +342,29 @@ Verified during this phase and worth carrying forward:
     the flag set, and refuses to start with required variables missing, naming
     every missing variable at once.
 
-- [ ] **C5. Deploy** — BLOCKED, needs your account
+- [ ] **C5. Deploy** — NOT DOING, decided 2026-09-09
   - Acceptance: Render service on the Docker runtime, Render PostgreSQL with TLS
     enabled in the pool config, migrations as a pre-deploy command,
     `TRUST_PROXY_HOPS` set correctly, database expiry date recorded.
   - Verify: create a link and follow it on the public URL. Confirm two different
     clients land in two different rate-limit buckets.
+  - **Decision: not deploying.** The owner chose local development and testing
+    only. Render's free PostgreSQL expires after 90 days and the free web tier
+    cold-starts after idling, and neither cost is worth paying for a project
+    whose stated goal is learning backend engineering rather than serving
+    traffic.
+  - What this leaves unmet, so nobody reads the project as finished when it is
+    not: success criterion 19 in `SPEC.md`, which is the only one that requires
+    a public URL. Criteria 1 to 18 all hold locally.
+  - `TRUST_PROXY_HOPS` stays `0`, which is correct with no proxy in front of the
+    service. It also means the proxy-related distortion recorded under Risks in
+    `SPEC-analytics.md` never arises locally: with no proxy, the socket address
+    is the client, so unique-visitor counts are real rather than collapsed.
+  - Nothing was built for the deploy that is now wasted. The Dockerfile, the
+    `DATABASE_SSL` setting, the pre-deploy migration command, and the container
+    `SIGTERM` verification all earn their place in local use.
+  - Reversible. Everything the deploy needs is in the repository, so this task
+    can be reopened later without rework.
 
 **Checkpoint C — passed except deployment.** 200 tests pass. The image builds,
 runs as a non-root user, and reports healthy. Both admin routes are closed and

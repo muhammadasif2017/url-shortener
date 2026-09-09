@@ -797,6 +797,13 @@ The project is complete when all of the following are demonstrably true.
     `TRUST_PROXY_HOPS` set correctly for that platform, verified by confirming
     that two different clients produce two different rate-limit buckets.
 
+**Criterion 19 is deliberately unmet.** On 2026-09-09 the owner decided not to
+deploy: local development and testing are enough for a project whose goal is
+learning backend engineering, and Render's free database expires after 90 days.
+Criteria 1 to 18 hold locally, and the deployment path stays in the repository,
+so this is a decision rather than a gap. `TRUST_PROXY_HOPS` remains `0`, which
+is the correct value with no proxy in front of the service.
+
 ## Risks
 
 | Risk | Impact | Mitigation |
