@@ -114,14 +114,27 @@ Rules for every task below:
     task A11, not here. This module destroys the stream instead, which is the
     correct action while the response has not yet been written.
 
-- [ ] **A8. Response helpers, errors, logger, cookies**
+- [x] **A8. Response helpers, errors, logger, cookies** — done
   - Acceptance: `json()`, `redirect()`, `noContent()`. `AppError` with code,
     message, and status. Error handler producing the one documented error shape.
     JSON logger to stdout. Cookie parse and serialise.
   - Verify: unit tests for the error shape, and for cookie parsing with several
     cookies in one header and a value containing `=`.
   - Files: `src/http/respond.ts`, `src/http/errorHandler.ts`,
-    `src/http/cookies.ts`, `src/lib/AppError.ts`, `src/lib/logger.ts`
+    `src/http/cookies.ts`, `src/lib/AppError.ts`, `src/lib/logger.ts`,
+    `tests/unit/http.test.ts`
+  - Verified: 29 tests pass, 132 in the suite overall.
+  - The rule the error handler enforces: an `AppError` was thrown deliberately
+    and its message is meant for the caller. Anything else is a bug whose
+    message may name an internal path or a connection string, so it is logged in
+    full and answered with a generic 500. One test throws an error carrying a
+    password in its message and asserts the password never reaches the response.
+  - Cookie parsing splits on the FIRST `=` only. Splitting on every `=` would
+    truncate base64 padding and JWT-shaped values, and the session would fail to
+    authenticate with no error anywhere. A repeated cookie name keeps the first
+    occurrence, so an injected duplicate cannot override a real session.
+  - `serialiseCookie` percent-encodes the value, which also prevents a value
+    containing `; Path=/admin` from inventing its own attributes.
 
 - [ ] **A9. Compose, including the test database**
   - Acceptance: Postgres 16 on host port 5433, plus an init script mounted at
