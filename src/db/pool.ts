@@ -43,9 +43,13 @@ function createPool(): pg.Pool {
     // `rejectUnauthorized` is false because these providers front the database
     // with a certificate signed by their own authority, which the container has
     // no root for. The connection is still encrypted.
-    ...(config.isProduction
-      ? { ssl: { rejectUnauthorized: false } }
-      : {}),
+    //
+    // Driven by its own setting rather than by NODE_ENV. Tying TLS to the
+    // environment name made the production image impossible to run against a
+    // local database: it demanded TLS from a server that has none, and the
+    // health check reported the database as down. Verified by running the built
+    // image against the Compose database.
+    ...(config.databaseSsl ? { ssl: { rejectUnauthorized: false } } : {}),
 
     // A single-process service on a free-tier database. More connections than
     // the database allows turns into connection errors under load, not speed.

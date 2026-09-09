@@ -30,6 +30,16 @@ export type Env = {
   readonly baseUrl: string;
   readonly databaseUrl: string;
   /**
+   * Whether to connect to PostgreSQL over TLS.
+   *
+   * Separate from `nodeEnv` on purpose. Managed providers require TLS and a
+   * local container does not offer it, so tying the two together makes the
+   * production image impossible to run locally: it would demand TLS from a
+   * server that has none, and the health check would report the database as
+   * down. Defaults to on in production, and can be turned off explicitly.
+   */
+  readonly databaseSsl: boolean;
+  /**
    * How many trusted proxies sit in front of this service.
    *
    * `0` means the socket address is the client. Above `0`, the client address
@@ -195,6 +205,13 @@ export function loadEnv(source: Source): Env {
 
   const enableUnauthenticatedLinkAdmin = source['ENABLE_UNAUTHENTICATED_LINK_ADMIN'] === '1';
 
+  const sslRaw = source['DATABASE_SSL']?.trim();
+  if (sslRaw !== undefined && sslRaw !== '' && sslRaw !== 'true' && sslRaw !== 'false') {
+    issues.push("DATABASE_SSL must be 'true' or 'false'.");
+  }
+  const databaseSsl =
+    sslRaw === undefined || sslRaw === '' ? nodeEnv === 'production' : sslRaw === 'true';
+
   // The flag exposes routes that let anyone enumerate every link and delete any
   // of them. Refusing to start is the only reliable way to keep a local
   // convenience from reaching production by way of a copied env file.
@@ -210,6 +227,7 @@ export function loadEnv(source: Source): Env {
     port,
     baseUrl: baseUrlRaw.replace(/\/+$/, ''),
     databaseUrl,
+    databaseSsl,
     trustProxyHops,
     ipHashSalt,
     rateLimitMax,

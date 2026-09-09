@@ -89,6 +89,31 @@ describe('loadEnv', () => {
     }
   });
 
+  it('defaults database TLS to on in production and off elsewhere', () => {
+    assert.equal(loadEnv(validEnv()).databaseSsl, false);
+    assert.equal(
+      loadEnv(validEnv({ NODE_ENV: 'production', BASE_URL: 'https://x.example' })).databaseSsl,
+      true,
+    );
+  });
+
+  it('allows database TLS to be set independently of NODE_ENV', () => {
+    // Tying TLS to the environment name made the production image impossible to
+    // run against a local database: it demanded TLS from a server with none,
+    // and the health check reported the database as down.
+    const env = loadEnv(
+      validEnv({ NODE_ENV: 'production', BASE_URL: 'https://x.example', DATABASE_SSL: 'false' }),
+    );
+
+    assert.equal(env.isProduction, true);
+    assert.equal(env.databaseSsl, false);
+  });
+
+  it('rejects a DATABASE_SSL value that is neither true nor false', () => {
+    const issues = expectIssues(validEnv({ DATABASE_SSL: 'yes' }));
+    assert.ok(issues.some((message) => message.startsWith('DATABASE_SSL')));
+  });
+
   it('rejects a short IP_HASH_SALT, which would be brute-forceable', () => {
     const issues = expectIssues(validEnv({ IP_HASH_SALT: 'too-short' }));
     assert.ok(issues.some((message) => message.startsWith('IP_HASH_SALT')));

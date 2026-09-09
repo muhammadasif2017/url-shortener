@@ -1,0 +1,25 @@
+# Everything the image must not contain.
+#
+# .env is the important line. It holds real credentials, and copying it into an
+# image ships those credentials to wherever the image goes.
+.env
+.env.*
+!.env.example
+
+node_modules
+.git
+.gitattributes
+.gitignore
+
+# Type checking happens in CI. The image never compiles anything.
+tsconfig.json
+tests
+
+# Documentation and planning add layers without changing behaviour.
+*.md
+tasks
+docker-compose.yml
+docker
+
+coverage
+*.log

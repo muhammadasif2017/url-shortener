@@ -313,6 +313,7 @@ broken state and failing at the first request.
 | `PORT` | yes | `3000` | Integer, 1 to 65535 |
 | `BASE_URL` | yes | `http://localhost:3000` | Used to build `shortUrl`; no trailing slash |
 | `DATABASE_URL` | yes | `postgres://postgres:postgres@localhost:5433/urlshortener` | |
+| `DATABASE_SSL` | no | `false` | Defaults to on in production. Separate from `NODE_ENV` so the production image can run against a local database |
 | `TRUST_PROXY_HOPS` | yes | `0` | `0` locally, correct hop count when deployed behind a proxy |
 | `IP_HASH_SALT` | yes | 32 random bytes, hex | Analytics only; rotating it resets unique-visitor counts |
 | `RATE_LIMIT_MAX` | no | `60` | Requests per window, default 60 |

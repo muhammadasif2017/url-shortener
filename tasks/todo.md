@@ -275,44 +275,94 @@ Verified during this phase and worth carrying forward:
 
 ## Phase C — Hardening and deployment
 
-- [ ] **C1. Rate limiting**
+- [x] **C1. Rate limiting** — done
   - Acceptance: fixed window keyed by resolved client IP. Defaults 60 per 60
     seconds. `GET /:slug` exempt. 429 in the standard error shape with
     `Retry-After`. Sweep expired entries on write, hard cap 10,000.
   - Verify: integration test exceeding the limit on `POST /api/links` and
     confirming `GET /:slug` still works. Unit test proving the map is capped.
+  - Verified: 13 tests. The eviction test sends 500 distinct keys at a cap of
+    50 and asserts the map never exceeds it, which is the memory-exhaustion
+    vector the cap exists to close.
+  - The limiter is injectable through `createAppServer`. A process-wide limit
+    low enough to test made every other integration file trip it, and those
+    failures looked like endpoint bugs rather than a shared counter.
+  - `/health` is exempt as well as `/:slug`. A platform polls the health check
+    far more often than any human uses the API, and a rate-limited health check
+    reports the service as unhealthy under its own monitoring.
 
-- [ ] **C2. Timeouts and graceful shutdown**
+- [x] **C2. Timeouts and graceful shutdown** — implemented, partly verified
   - Acceptance: `headersTimeout` 10s, `requestTimeout` 20s,
     `keepAliveTimeout` 5s. On `SIGTERM`: stop accepting, await in-flight, drain,
     close pool, exit, every step bounded.
   - Verify: send `SIGTERM` during an in-flight request and confirm it completes
     before exit.
+  - Implemented in task A11: `headersTimeout` 10s, `requestTimeout` 20s,
+    `keepAliveTimeout` 5s, and a shutdown sequence that stops accepting, waits
+    for in-flight requests, then closes the pool, with every step bounded.
+  - **Not verified on this machine.** Windows has no real `SIGTERM`:
+    `process.kill(pid, "SIGTERM")` terminates the process immediately rather
+    than delivering a signal, so the graceful path cannot be exercised here.
+    The Dockerfile uses exec form so the process is PID 1 and receives the
+    signal directly on Linux. Verify there before relying on it.
 
-- [ ] **C3. Dockerfile**
+- [x] **C3. Dockerfile** — done
   - Acceptance: `node:22.15-alpine`, `npm ci --omit=dev`, non-root `node` user,
     `NODE_ENV=production`, `HEALTHCHECK` hitting `/health`, and a `CMD` using
     `--env-file-if-exists`.
   - Verify: build the image, run it against the Compose database, and confirm
     Docker reports the container healthy.
+  - Verified: image builds, runs as the `node` user, `/health` returns 200 with
+    `database: "ok"`, a link is created and redirects to the right destination,
+    the admin listing returns 404, and Docker reports the container `healthy`.
+  - **Real bug found here.** Database TLS was tied to `NODE_ENV=production`, so
+    the production image demanded TLS from a local Postgres that offers none and
+    the health check reported the database as down. TLS now has its own setting,
+    `DATABASE_SSL`, defaulting to on in production. Tying a transport decision
+    to an environment name made the production image impossible to test locally.
+  - The health check runs `node -e` with `fetch` rather than curl. Neither curl
+    nor wget is in the image, and adding one would be a larger attack surface
+    than the check is worth.
+  - A `.dockerignore` keeps `.env` out of the image. Copying it in would ship
+    real credentials wherever the image goes.
 
-- [ ] **C4. BLOCKING GATE — close the unauthenticated admin routes**
+- [x] **C4. BLOCKING GATE — close the unauthenticated admin routes** — done
   - Acceptance: `ENABLE_UNAUTHENTICATED_LINK_ADMIN` is unset in every deployed
     environment, so `GET /api/links` and `DELETE /api/links/:slug` both return
     404 there.
   - Verify: against the deployed URL, both routes return 404.
   - Note: this is not a checklist formality. Without it, anyone can enumerate
     every link and delete any of them.
+  - Verified by automated test, not by inspection. `tests/integration/process.test.ts`
+    starts the real entry point in a child process with the flag absent and
+    asserts both routes return 404 while link creation and redirection still
+    work. Configuration is cached per process, so this could not be tested
+    in-process, which is why B4 left it as a smoke check.
+  - Two further startup tests: the service refuses to start in production with
+    the flag set, and refuses to start with required variables missing, naming
+    every missing variable at once.
 
-- [ ] **C5. Deploy**
+- [ ] **C5. Deploy** — BLOCKED, needs your account
   - Acceptance: Render service on the Docker runtime, Render PostgreSQL with TLS
     enabled in the pool config, migrations as a pre-deploy command,
     `TRUST_PROXY_HOPS` set correctly, database expiry date recorded.
   - Verify: create a link and follow it on the public URL. Confirm two different
     clients land in two different rate-limit buckets.
 
-**Checkpoint C.** Image healthy, public URL responds, proxy hops verified, both
-admin routes closed.
+**Checkpoint C — passed except deployment.** 200 tests pass. The image builds,
+runs as a non-root user, and reports healthy. Both admin routes are closed and
+proven closed by an automated test.
+
+Outstanding, and neither can be done from here:
+
+1. **Deployment needs your Render account.** Creating the service, provisioning
+   the database, and setting the environment variables all require credentials
+   nobody should paste into a session. Everything the deploy depends on is
+   ready: the Dockerfile, the pre-deploy migration command, and `DATABASE_SSL`.
+2. **`TRUST_PROXY_HOPS` cannot be set correctly until the service is deployed.**
+   The right value depends on how many proxies the platform actually puts in
+   front of it, which is only observable from there. Until then it stays `0`,
+   and while it is wrong the rate limiter treats every visitor as one client.
 
 ---
 
