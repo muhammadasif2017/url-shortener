@@ -631,8 +631,9 @@ so asserting the attributes is what actually catches a mis-scoped deletion.
   - `npm run test:unit` was run on its own as well as through `npm test`. It has
     no `--env-file`, so a unit test that reached configuration would fail there
     and pass in the full run. It passes: 184 tests.
-  - Not done here: the shutdown wiring at `src/index.ts:79` is E4, and the
-    comment marking that step is left in place. E4 needs its own 5 second
+  - Not done here: the shutdown wiring is E4, and the comment marking that step
+    is left in place in `src/index.ts`. E4 later moved the sequence into
+    `src/shutdown.ts`, so that line reference no longer resolves. E4 needs its own 5 second
     constant rather than reusing `DRAIN_TIMEOUT_MS`, which is 10 seconds and
     belongs to the in-flight request wait.
 - [x] **E4. Wire the drain into shutdown** in the correct order — done
@@ -744,5 +745,20 @@ so asserting the attributes is what actually catches a mis-scoped deletion.
     characters, proving truncation still protects the fire-and-forget insert on
     this path.
 
-**Checkpoint E.** After `drainPendingWrites()`, the click count equals the
-number of redirects performed in the test.
+**Checkpoint E — passed.** After `drainPendingWrites()`, the click count equals
+the number of redirects performed in the test. Asserted through the HTTP
+response rather than only against the database, by "reports a total equal to the
+number of redirects performed" in `tests/integration/stats.test.ts`: three
+redirects, a drain, and `total` of exactly 3.
+
+302 tests pass and `npm run typecheck` is clean. Every item in the definition of
+done in `SPEC-analytics.md` holds, including that `pg` is still the only
+production dependency.
+
+One thing this checkpoint cannot show on this machine: the signal path into the
+shutdown sequence. Windows does not deliver a real `SIGTERM`, so the drain is
+proven by calling `performShutdown` directly. Verify the signal case on Linux,
+in the container, alongside the C2 note.
+
+Phase E is complete. What remains for the project is C5, the deploy, which needs
+your Render account, and success criterion 19 with it.

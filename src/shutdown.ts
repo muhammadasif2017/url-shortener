@@ -62,7 +62,9 @@ export async function performShutdown(
   log('info', 'shutting down', { signal });
 
   try {
-    // Step 1: stop accepting new connections, and wait for open ones to finish.
+    // Steps 1 and 2 of the sequence in `SPEC.md`, in one await: `close` stops
+    // accepting connections immediately and calls back once the open ones have
+    // finished.
     await withDeadline(
       new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
@@ -71,15 +73,16 @@ export async function performShutdown(
       'in-flight requests',
     );
 
-    // Step 2: drain click writes, which were started without being awaited.
-    // This cannot move above step 1: requests still finishing keep registering
-    // writes, and a drain that ran first would miss exactly those.
+    // Step 3: drain click writes, which were started without being awaited.
+    // This cannot move above the wait: requests still finishing keep
+    // registering writes, and a drain that ran first would miss exactly those.
     //
     // The drain itself is unbounded, because only this sequence knows how much
     // time the process has left. The bound lives here.
     await withDeadline(drainPendingWrites(), CLICK_DRAIN_TIMEOUT_MS, 'pending click writes');
 
-    // Step 3: close the pool, now that nothing needs it.
+    // Step 4: close the pool, now that nothing needs it. Step 5, the exit, is
+    // the caller's, which is what makes this function testable.
     await closePool();
 
     log('info', 'shutdown complete');
