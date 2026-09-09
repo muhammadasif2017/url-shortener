@@ -1,34 +1,119 @@
-// Process entry point.
-//
-// Task A11 replaces this with real config loading, an HTTP listener, and the
-// graceful shutdown sequence from SPEC.md. For now it exists so that the
-// toolchain can be verified end to end: TypeScript type checking, Node's
-// runtime type stripping, and the npm scripts that drive both.
+import type { Server } from 'node:http';
 
-/** The facts logged once at startup, so a running process is identifiable. */
-type Startup = {
-  readonly node: string;
-  readonly env: string;
-};
+import { env } from './config/env.ts';
+import { closePool } from './db/pool.ts';
+import { describeError, log } from './lib/logger.ts';
+import { createAppServer } from './server.ts';
 
 /**
- * Collects the runtime facts worth recording at boot.
+ * Process entry point.
  *
- * @returns The Node version and the resolved environment name.
+ * Owns exactly three things: reading configuration, listening, and shutting
+ * down cleanly. Everything else lives in `server.ts`, which is testable because
+ * it never listens.
  */
-function describeStartup(): Startup {
-  return {
-    node: process.version,
-    env: process.env['NODE_ENV'] ?? 'development',
-  };
+
+/** How long to wait for in-flight requests before forcing exit. */
+const DRAIN_TIMEOUT_MS = 10_000;
+
+/**
+ * Starts the service.
+ *
+ * Configuration is read first and deliberately not caught. A missing or invalid
+ * variable stops the process here, with every problem listed, rather than
+ * producing a confusing failure on the first request that needed it.
+ */
+function main(): void {
+  const config = env();
+  const server = createAppServer();
+
+  server.listen(config.port, () => {
+    log('info', 'server listening', {
+      port: config.port,
+      env: config.nodeEnv,
+      baseUrl: config.baseUrl,
+    });
+  });
+
+  for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+    process.once(signal, () => {
+      void shutdown(server, signal);
+    });
+  }
 }
 
-const startup = describeStartup();
+/**
+ * Shuts down in an order that does not lose work.
+ *
+ * The order matters and is easy to get wrong. `server.close()` stops new
+ * connections; it does **not** wait for in-flight requests. Closing the pool
+ * immediately afterwards would fail the requests still running, so the wait
+ * comes between them.
+ *
+ * Every step is bounded. An unbounded wait against a hung database means the
+ * platform sends `SIGKILL` and discards everything anyway, so a deadline with a
+ * logged timeout is strictly better than waiting forever.
+ *
+ * @param server - The listening server.
+ * @param signal - Which signal triggered the shutdown, for the log line.
+ */
+async function shutdown(server: Server, signal: string): Promise<void> {
+  log('info', 'shutting down', { signal });
 
-console.log(
-  JSON.stringify({
-    level: 'info',
-    message: 'scaffold ready',
-    ...startup,
-  }),
-);
+  try {
+    // Step 1: stop accepting new connections, and wait for open ones to finish.
+    await withDeadline(
+      new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      }),
+      DRAIN_TIMEOUT_MS,
+      'in-flight requests',
+    );
+
+    // Step 2 belongs here once analytics exists: drain pending click writes,
+    // which are started deliberately without being awaited. Draining before
+    // in-flight requests finish would miss the events those requests add.
+
+    // Step 3: close the pool, now that nothing needs it.
+    await closePool();
+
+    log('info', 'shutdown complete');
+    process.exit(0);
+  } catch (error) {
+    log('error', 'shutdown failed', describeError(error));
+    process.exit(1);
+  }
+}
+
+/**
+ * Bounds a shutdown step.
+ *
+ * A timeout is logged rather than thrown, because a slow step should not stop
+ * the remaining steps from running.
+ *
+ * @param work - The step.
+ * @param milliseconds - How long to allow.
+ * @param what - Name of the step, for the log line.
+ */
+async function withDeadline(
+  work: Promise<void>,
+  milliseconds: number,
+  what: string,
+): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+
+  const deadline = new Promise<void>((resolve) => {
+    timer = setTimeout(() => {
+      log('warn', 'shutdown step timed out', { step: what, milliseconds });
+      resolve();
+    }, milliseconds);
+  });
+
+  try {
+    await Promise.race([work, deadline]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+main();

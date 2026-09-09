@@ -1,0 +1,33 @@
+# Local development infrastructure.
+#
+# Host port 5433, not the default 5432, because another project on this machine
+# already binds 5432. Changing the host side only; the container still listens
+# on 5432 internally.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: url-shortener-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: urlshortener
+    ports:
+      - '127.0.0.1:5433:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # Scripts here run ONLY when the data volume is first created. The image
+      # creates exactly one database, the one named by POSTGRES_DB, so without
+      # this the test database would never exist and `npm test` could not run.
+      - ./docker/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # The migration runner and the test suite both connect immediately after
+      # `npm run db:up`. Without a health check they race the server's startup
+      # and fail with a connection error on a cold machine.
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d urlshortener']
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+volumes:
+  postgres-data:

@@ -136,35 +136,63 @@ Rules for every task below:
   - `serialiseCookie` percent-encodes the value, which also prevents a value
     containing `; Path=/admin` from inventing its own attributes.
 
-- [ ] **A9. Compose, including the test database**
+- [x] **A9. Compose, including the test database** — done
   - Acceptance: Postgres 16 on host port 5433, plus an init script mounted at
     `/docker-entrypoint-initdb.d/` that runs `create database urlshortener_test`.
   - Verify: `npm run db:up`, then confirm both databases exist.
   - Files: `docker-compose.yml`, `docker/init/01-create-test-db.sql`
   - Note: without this, `migrate:test` fails with `3D000` and `npm test` cannot
     run at all.
+  - Verified: both `urlshortener` and `urlshortener_test` exist after
+    `npm run db:up`.
+  - Added: a health check on the container. The migration runner and the test
+    suite both connect immediately after `db:up`, and without it they race the
+    server's startup on a cold machine.
 
-- [ ] **A10. Pool, migration runner, first migration**
+- [x] **A10. Pool, migration runner, first migration** — done
   - Acceptance: runner applies numbered SQL files in order, records each in a
     migrations table, wraps each file in a transaction, and is idempotent.
     `001_create_links.sql` creates the table with every constraint from
     `SPEC-links.md`.
   - Verify: `npm run migrate` twice; the second run applies nothing. Confirm
     every CHECK constraint exists.
-  - Files: `src/db/pool.ts`, `scripts/migrate.ts`,
+  - Files: `src/db/pool.ts`, `src/db/withTransaction.ts`, `scripts/migrate.ts`,
     `migrations/001_create_links.sql`
+  - Verified: applied to both databases, second run reports "No pending
+    migrations", and all six constraints exist. Each was then exercised
+    directly in psql: a two-character slug raises `links_slug_length`, a slug
+    containing a dot raises `links_slug_charset`, and a duplicate raises
+    `links_slug_unique` with SQLSTATE 23505.
+  - Added: an advisory lock around the run, so two deploys starting at once
+    cannot both apply the same file. Each file commits together with its own
+    bookkeeping row, so the record and the schema cannot disagree.
 
-- [ ] **A11. Server, entry point, health check**
+- [x] **A11. Server, entry point, health check** — done
   - Acceptance: `server.ts` builds the server without listening. `index.ts`
     listens and wires shutdown. `/health` runs `select 1` with a 2 second
     timeout, returning 200 or 503.
   - Verify: integration test asserting 200 with `database: "ok"`.
   - Files: `src/server.ts`, `src/index.ts`, `tests/helpers/server.ts`,
     `tests/integration/health.test.ts`
+  - Verified: 11 integration tests pass against the real test database, and the
+    real entry point was smoke tested separately, returning
+    `{"status":"ok","database":"ok"}` on port 3000.
+  - **Real bug found and fixed here.** The body reader destroyed the request
+    stream when the size limit was exceeded. That kills the socket while the
+    client is still uploading, so the client reports `fetch failed` instead of
+    reading the 413. The cause was subtler than it looked: leaving a
+    `for await` loop early calls `return()` on the iterator, which destroys the
+    stream on its own. The loop now uses an explicit iterator and simply stops
+    calling `next()`, leaving the stream paused; the server writes the response
+    and then drains the remainder.
+  - This is the flake the specification review predicted but could not verify
+    without code. It also confirmed the reviewer's warning that a 20 KB test
+    passes by accident of size: 20 KB fits in socket buffers. A second test at
+    2 MB now guards the regression.
 
-**Checkpoint A.** Server starts. `/health` returns 200 with `database: "ok"`.
-All unit tests above pass. `npm run typecheck` is clean. Do not start Phase B
-until every box above is ticked.
+**Checkpoint A — PASSED.** Server starts. `/health` returns 200 with
+`database: "ok"`. 144 tests pass, 133 unit and 11 integration.
+`npm run typecheck` is clean. `pg` is still the only production dependency.
 
 ---
 

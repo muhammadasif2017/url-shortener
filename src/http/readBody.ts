@@ -28,8 +28,6 @@ export type ReadBodyResult =
  */
 export type BodySource = AsyncIterable<Buffer | string> & {
   readonly headers: Readonly<Record<string, string | string[] | undefined>>;
-  /** Stops reading. Called as soon as the limit is exceeded. */
-  destroy(error?: Error): void;
 };
 
 /**
@@ -53,23 +51,34 @@ export type BodySource = AsyncIterable<Buffer | string> & {
 export async function readBody(request: BodySource): Promise<ReadBodyResult> {
   const declared = declaredLength(request.headers['content-length']);
   if (declared !== undefined && declared > MAX_BODY_BYTES) {
-    request.destroy();
     return tooLarge();
   }
 
   const chunks: Buffer[] = [];
   let total = 0;
 
-  for await (const chunk of request) {
-    const buffer = typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : chunk;
+  // An explicit iterator, rather than `for await`, and the reason is not style.
+  //
+  // Leaving a `for await` loop early calls `return()` on the iterator, which
+  // destroys the underlying stream. Destroying it kills the socket while the
+  // client is still uploading, and the client then reports a connection reset
+  // instead of reading the 413 that was about to be sent. Verified: an
+  // integration test failed with `fetch failed` rather than a readable status.
+  //
+  // Stopping by simply not calling `next()` again leaves the stream paused and
+  // intact. The server writes the response and drains the remainder afterwards,
+  // because only the server knows when the response has gone out.
+  const iterator = request[Symbol.asyncIterator]();
+
+  for (;;) {
+    const step = await iterator.next();
+    if (step.done === true) break;
+
+    const buffer =
+      typeof step.value === 'string' ? Buffer.from(step.value, 'utf8') : step.value;
     total += buffer.byteLength;
 
-    if (total > MAX_BODY_BYTES) {
-      // Stop here. Waiting for the stream to end would mean accepting the whole
-      // oversized body first, which is the failure this limit exists to prevent.
-      request.destroy();
-      return tooLarge();
-    }
+    if (total > MAX_BODY_BYTES) return tooLarge();
 
     chunks.push(buffer);
   }

@@ -1,0 +1,13 @@
+-- Creates the database the test suite runs against.
+--
+-- The official postgres image creates exactly one database, the one named by
+-- POSTGRES_DB. Pointing .env.test at a different name does not bring that
+-- database into existence: `npm run migrate:test` would fail with
+-- `3D000 database "urlshortener_test" does not exist`, and because `pretest`
+-- runs it, `npm test` could never run either.
+--
+-- This script executes only on FIRST initialisation of the data volume. If the
+-- volume already exists, Docker skips it silently. Recover with either:
+--   docker compose down -v          (destroys local data)
+--   docker compose exec postgres createdb -U postgres urlshortener_test
+create database urlshortener_test;

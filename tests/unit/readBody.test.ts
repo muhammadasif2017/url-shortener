@@ -18,9 +18,8 @@ import {
 function fakeRequest(
   chunks: readonly (Buffer | string)[],
   headers: Record<string, string | string[] | undefined> = {},
-): BodySource & { bytesRead(): number; wasDestroyed(): boolean } {
+): BodySource & { bytesRead(): number } {
   let bytesRead = 0;
-  let destroyed = false;
 
   const stream = Readable.from(
     (function* generate() {
@@ -32,23 +31,10 @@ function fakeRequest(
     })(),
   );
 
-  const source = stream as unknown as BodySource & {
-    bytesRead(): number;
-    wasDestroyed(): boolean;
-  };
+  const source = stream as unknown as BodySource & { bytesRead(): number };
 
   Object.defineProperty(source, 'headers', { value: headers });
-
-  const originalDestroy = stream.destroy.bind(stream);
-  Object.defineProperty(source, 'destroy', {
-    value: (error?: Error) => {
-      destroyed = true;
-      return originalDestroy(error);
-    },
-  });
-
   Object.defineProperty(source, 'bytesRead', { value: () => bytesRead });
-  Object.defineProperty(source, 'wasDestroyed', { value: () => destroyed });
 
   return source;
 }
@@ -85,6 +71,17 @@ describe('readBody', () => {
     assert.equal(result.code, 'BODY_TOO_LARGE');
   });
 
+  it('leaves the stream readable so the server can send 413 and then drain', async () => {
+    // Destroying the stream here would kill the socket while the client is
+    // still uploading, and the client would report a connection reset instead
+    // of reading the 413. The server drains the remainder after responding.
+    const request = fakeRequest([Buffer.alloc(MAX_BODY_BYTES + 1, 0x61)]);
+    const result = await readBody(request);
+
+    assert.ok(!result.ok);
+    assert.equal((request as unknown as { destroyed: boolean }).destroyed, false);
+  });
+
   it('stops reading rather than buffering the whole oversized body', async () => {
     // A megabyte in 64 KB chunks. A correct implementation reads only until the
     // running total passes the limit; one that measured after buffering would
@@ -100,7 +97,6 @@ describe('readBody', () => {
       request.bytesRead() <= MAX_BODY_BYTES + 64 * 1024,
       `read ${request.bytesRead()} bytes, expected to stop near the ${MAX_BODY_BYTES} byte limit`,
     );
-    assert.equal(request.wasDestroyed(), true);
   });
 
   it('rejects an oversized Content-Length without reading anything', async () => {
