@@ -46,10 +46,16 @@ function main(): void {
     });
   });
 
+  // One flag across both signals, not `once` per signal. `once` only stops a
+  // repeat of the same signal: SIGTERM followed by SIGINT would otherwise start
+  // the sequence twice, and both runs would race the pool close.
+  let shuttingDown = false;
+
   for (const signal of ['SIGTERM', 'SIGINT'] as const) {
-    // `once`, not `on`. A second signal during shutdown would start the
-    // sequence again alongside the first, and both would race the pool close.
-    process.once(signal, () => {
+    process.on(signal, () => {
+      if (shuttingDown) return;
+      shuttingDown = true;
+
       void performShutdown(server, signal).then((code) => {
         process.exit(code);
       });

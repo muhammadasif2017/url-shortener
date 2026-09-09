@@ -243,33 +243,47 @@ export function recordClick(input: ClickInput): void {
     }),
   );
 
-  if (!accepted) shed();
+  if (accepted) {
+    reportRecovery();
+    return;
+  }
+
+  reportShedding();
 }
 
 /** Whether writes are currently being shed, so the log reports edges only. */
 let shedding = false;
-/** How many clicks have been dropped in the current episode. */
+/** How many clicks have been dropped since shedding began. */
 let droppedClicks = 0;
 
 /**
  * Records that a click was dropped because too many writes are outstanding.
  *
- * Logged on the first drop and again when the backlog clears, rather than once
- * per click. A service already failing to keep up with its own writes does not
- * need a log line per request on top of it.
+ * Logged on the first drop only. A service already failing to keep up with its
+ * own writes does not need a log line per request on top of it.
  */
-function shed(): void {
+function reportShedding(): void {
   droppedClicks += 1;
+  if (shedding) return;
 
-  if (!shedding) {
-    shedding = true;
-    log('warn', 'click writes are being shed', { pending: writes.size() });
-    void writes.drain().then(() => {
-      log('warn', 'click writes recovered', { dropped: droppedClicks });
-      shedding = false;
-      droppedClicks = 0;
-    });
-  }
+  shedding = true;
+  log('warn', 'click writes are being shed', { pending: writes.size() });
+}
+
+/**
+ * Reports the end of a shedding episode, on the first write accepted after one.
+ *
+ * Recovery is detected here rather than by awaiting a drain of its own. A
+ * second drain over the same tracker resolves at the same moment the shutdown
+ * drain does, which would fire this log line while the pool is closing, for a
+ * process that is not recovering at all.
+ */
+function reportRecovery(): void {
+  if (!shedding) return;
+
+  log('warn', 'click writes recovered', { dropped: droppedClicks });
+  shedding = false;
+  droppedClicks = 0;
 }
 
 /**

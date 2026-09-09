@@ -651,10 +651,22 @@ so asserting the attributes is what actually catches a mis-scoped deletion.
     rather than reusing the 10 second request wait. The two are not the same
     kind of wait: a request still running has a caller waiting for an answer, a
     click write has nobody, and losing one is already accepted.
-  - The ordering test is the one worth keeping. It issues a redirect while step
-    1 is still waiting on a controllable stand-in server, so the click write is
-    registered *after* the shutdown began. A drain placed before step 1 returns
-    over an empty set and that row never exists.
+  - The second test proves a narrower property than its first name claimed, and
+    it was renamed to match. It issues a redirect after the sequence has begun,
+    so the click write is registered late and is still drained, which is the
+    loop-until-empty property at shutdown scope. It does **not** prove step 1
+    waits for that request: the stand-in server and the listener serving the
+    request are separate objects, so the sequencing comes from the test body
+    rather than from the code. Only the container on Linux can show that.
+  - Two defects found in review after the first commit and fixed. The shedding
+    recovery log used a second drain over the same tracker, which resolves at
+    the same moment the shutdown drain does, so a shedding service would have
+    logged "recovered" while its pool was closing. Recovery is now reported on
+    the first write accepted after an episode, which is the event it actually
+    describes. And `process.once` per signal does not prevent a concurrent
+    shutdown, because `SIGTERM` and `SIGINT` are separate registrations: one
+    flag now guards both, so a second signal cannot start a second sequence
+    racing the pool close.
   - A failing step returns exit code 1. Without that a broken shutdown exits 0
     and looks exactly like a clean one.
   - **What is still not verified here.** The signal handler itself. Windows does

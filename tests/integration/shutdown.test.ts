@@ -83,7 +83,7 @@ describe('performShutdown', () => {
     assert.equal(pendingWriteCount(), 0);
   });
 
-  it('waits for in-flight requests before draining', async () => {
+  it('drains a write registered after the sequence began', async () => {
     const server = await startTestServer(linkRoutes);
     const link = await insertLink();
     const { server: stand, release } = controllableServer();
@@ -91,8 +91,13 @@ describe('performShutdown', () => {
     const shutdown = performShutdown(stand, 'SIGTERM');
 
     // A request that lands while step 1 is still waiting. Its click write is
-    // registered after the shutdown began, which is the case a drain placed
-    // before step 1 would miss entirely.
+    // registered after the shutdown began, so this proves the drain covers
+    // writes that did not exist when the sequence started.
+    //
+    // It does not prove step 1 waits for that request: the stand-in server and
+    // the listener serving this fetch are separate objects, and the sequencing
+    // here comes from the test body. Only the container on Linux can show the
+    // real signal path.
     const response = await server.fetch(`/${link.slug}`);
     assert.equal(response.status, 302);
 
