@@ -22,17 +22,48 @@ import type {
  */
 
 /**
- * Start of the reporting window, as a `timestamptz`.
+ * Builds the start of the reporting window, as a `timestamptz`.
+ *
+ * Takes the placeholder number rather than assuming one. As a constant it read
+ * as self-contained SQL while silently requiring every caller to bind the day
+ * count as `$2`; a query that bound its parameters in another order would have
+ * compared against whatever value happened to land there.
  *
  * Written so that `occurred_at` itself is never wrapped in a function. A
  * comparison against a bare column can use
  * `click_events_link_id_occurred_at_idx`; one against `occurred_at at time zone
  * 'UTC'` cannot, and would scan every row the link has.
+ *
+ * @param daysPlaceholder - Which `$n` carries the window length in days.
+ * @returns A SQL expression for the first instant of the window.
  */
-const WINDOW_START = `
-  (date_trunc('day', now() at time zone 'UTC') - make_interval(days => $2::int - 1))
-    at time zone 'UTC'
-`;
+function windowStart(daysPlaceholder: number): string {
+  return `
+    (date_trunc('day', now() at time zone 'UTC')
+       - make_interval(days => $${daysPlaceholder}::int - 1))
+      at time zone 'UTC'
+  `;
+}
+
+/**
+ * Builds the calendar of days the breakdown covers.
+ *
+ * Shares the placeholder rule above: the same `$n` names the day count here and
+ * in the range predicate, so the series and the filter cannot disagree.
+ *
+ * @param daysPlaceholder - Which `$n` carries the window length in days.
+ * @returns A SQL expression producing one row per UTC day in the window.
+ */
+function windowCalendar(daysPlaceholder: number): string {
+  return `
+    select generate_series(
+      date_trunc('day', now() at time zone 'UTC')
+        - make_interval(days => $${daysPlaceholder}::int - 1),
+      date_trunc('day', now() at time zone 'UTC'),
+      interval '1 day'
+    ) as day
+  `;
+}
 
 /**
  * Writes one click event.
@@ -90,19 +121,23 @@ export async function readClickTotals(linkId: string, days: number): Promise<Cli
        count(*) filter (where is_bot)                    as bot_clicks
      from click_events
      where link_id = $1
-       and occurred_at >= ${WINDOW_START}`,
+       and occurred_at >= ${windowStart(2)}`,
     [linkId, days],
   );
 
+  // An aggregate with no `group by` returns exactly one row, even over no data,
+  // where the counts are zero. A `?? 0` fallback here would read as defensive
+  // and would instead hide a query that had stopped being an aggregate.
   const row = result.rows[0];
+  if (row === undefined) throw new Error('Click totals query returned no row.');
 
   // `count(*)` is `bigint`, so every value here arrives as a string. A count in
   // this system cannot exceed Number.MAX_SAFE_INTEGER, so Number() is safe, and
   // converting here is what stops `assert.equal(total, 3)` failing against '3'.
   return {
-    total: Number(row?.total ?? 0),
-    uniqueVisitors: Number(row?.unique_visitors ?? 0),
-    botClicks: Number(row?.bot_clicks ?? 0),
+    total: Number(row.total),
+    uniqueVisitors: Number(row.unique_visitors),
+    botClicks: Number(row.bot_clicks),
   };
 }
 
@@ -128,20 +163,14 @@ export async function readClickTotals(linkId: string, days: number): Promise<Cli
  */
 export async function readClicksByDay(linkId: string, days: number): Promise<DailyClicks[]> {
   const result = await pool().query<DailyRow>(
-    `with calendar as (
-       select generate_series(
-         date_trunc('day', now() at time zone 'UTC') - make_interval(days => $2::int - 1),
-         date_trunc('day', now() at time zone 'UTC'),
-         interval '1 day'
-       ) as day
-     )
+    `with calendar as (${windowCalendar(2)})
      select to_char(calendar.day, 'YYYY-MM-DD') as date,
             count(event.id)                     as clicks
      from calendar
      left join click_events event
        on event.link_id = $1
       and not event.is_bot
-      and event.occurred_at >= ${WINDOW_START}
+      and event.occurred_at >= ${windowStart(2)}
       and date_trunc('day', event.occurred_at at time zone 'UTC') = calendar.day
      group by calendar.day
      order by calendar.day`,
@@ -189,7 +218,7 @@ export async function readTopReferrers(
      from click_events
      where link_id = $1
        and not is_bot
-       and occurred_at >= ${WINDOW_START}
+       and occurred_at >= ${windowStart(2)}
      group by referrer
      order by clicks desc, referrer asc
      limit $3`,

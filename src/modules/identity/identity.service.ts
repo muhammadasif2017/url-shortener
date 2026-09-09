@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { unauthenticated } from '../../http/auth.ts';
 
 import { env } from '../../config/env.ts';
 import { AppError } from '../../lib/AppError.ts';
@@ -123,4 +124,24 @@ export async function resolveSession(
 export async function logout(sessionId: string | undefined): Promise<void> {
   if (sessionId === undefined || sessionId === '') return;
   await repository.deleteSession(sessionId);
+}
+
+/**
+ * Resolves the caller's session, requiring one.
+ *
+ * Lives here rather than in each module's routes file, because it is the check
+ * that decides whether a request is authenticated at all and two copies of it
+ * are two things that can drift apart. It takes only what it needs from a
+ * request, so the identity module keeps no dependency on the HTTP layer.
+ *
+ * @param sessionId - The value from the session cookie, or `undefined`.
+ * @returns The authenticated user's id.
+ * @throws {AppError} 401 when the cookie is missing, unknown, or expired. All
+ *   three give the same answer, because distinguishing them would confirm which
+ *   session ids once existed.
+ */
+export async function requireUserId(sessionId: string | undefined): Promise<string> {
+  const user = await resolveSession(sessionId);
+  if (user === undefined) throw unauthenticated();
+  return user.id;
 }

@@ -1,5 +1,5 @@
 import { env } from '../../config/env.ts';
-import { readSessionId, requireJsonContentType, unauthenticated } from '../../http/auth.ts';
+import { readSessionId, requireJsonContentType } from '../../http/auth.ts';
 import type { RequestContext, RouteResponse, RouteTable } from '../../http/context.ts';
 import { json, noContent, redirect } from '../../http/respond.ts';
 import { AppError } from '../../lib/AppError.ts';
@@ -78,21 +78,6 @@ function decodeCursor(cursor: string): string {
 }
 
 /**
- * Resolves the caller's session, requiring one.
- *
- * @param context - The request.
- * @returns The authenticated user's id.
- * @throws {AppError} 401 when the cookie is missing, unknown, or expired. All
- *   three give the same answer, because distinguishing them would reveal which
- *   session ids once existed.
- */
-async function requireUserId(context: RequestContext): Promise<string> {
-  const user = await identityService.resolveSession(readSessionId(context));
-  if (user === undefined) throw unauthenticated();
-  return user.id;
-}
-
-/**
  * Resolves the caller's session, allowing none.
  *
  * Used by link creation, which stays open to anonymous callers. A bad or
@@ -163,7 +148,7 @@ export const linkRoutes: RouteTable = [
     method: 'GET',
     path: '/api/links',
     async handle(context): Promise<RouteResponse> {
-      const ownerId = await requireUserId(context);
+      const ownerId = await identityService.requireUserId(readSessionId(context));
 
       const limit = parseBoundedInteger(
         context.query.get('limit') ?? undefined,
@@ -195,7 +180,7 @@ export const linkRoutes: RouteTable = [
     method: 'DELETE',
     path: '/api/links/:slug',
     async handle(context): Promise<RouteResponse> {
-      const userId = await requireUserId(context);
+      const userId = await identityService.requireUserId(readSessionId(context));
       await linkService.deleteLink(context.params['slug'] ?? '', userId);
       return noContent();
     },

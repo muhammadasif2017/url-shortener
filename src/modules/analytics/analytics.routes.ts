@@ -1,4 +1,4 @@
-import { readSessionId, unauthenticated } from '../../http/auth.ts';
+import { readSessionId } from '../../http/auth.ts';
 import type { RequestContext, RouteResponse, RouteTable } from '../../http/context.ts';
 import { json } from '../../http/respond.ts';
 import { AppError } from '../../lib/AppError.ts';
@@ -21,21 +21,6 @@ import {
  * segment count, so neither the one-segment redirect nor the three-segment
  * `/api/links/:slug` can answer them whatever order routes are registered in.
  */
-
-/**
- * Resolves the caller's session, requiring one.
- *
- * @param context - The request.
- * @returns The authenticated user's id.
- * @throws {AppError} 401 when the cookie is missing, unknown, or expired, all
- *   of which give the same answer so that no session id is confirmed to have
- *   existed.
- */
-async function requireUserId(context: RequestContext): Promise<string> {
-  const user = await identityService.resolveSession(readSessionId(context));
-  if (user === undefined) throw unauthenticated();
-  return user.id;
-}
 
 /**
  * Reads the `days` query parameter.
@@ -81,7 +66,7 @@ export const analyticsRoutes: RouteTable = [
     method: 'GET',
     path: '/api/links/:slug/stats',
     async handle(context): Promise<RouteResponse> {
-      const userId = await requireUserId(context);
+      const userId = await identityService.requireUserId(readSessionId(context));
       const stats = await analyticsService.readLinkStats(
         context.params['slug'] ?? '',
         userId,
@@ -95,7 +80,7 @@ export const analyticsRoutes: RouteTable = [
     method: 'GET',
     path: '/api/links/:slug/referrers',
     async handle(context): Promise<RouteResponse> {
-      const userId = await requireUserId(context);
+      const userId = await identityService.requireUserId(readSessionId(context));
       const referrers = await analyticsService.readLinkReferrers(
         context.params['slug'] ?? '',
         userId,

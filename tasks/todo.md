@@ -819,6 +819,33 @@ your Render account, and success criterion 19 with it.
     to separate routes, services, repositories, and schemas, and a mechanism
     that is none of those is clearer beside them than inside one.
 
+- [x] **R2. Apply the remaining review findings** — done
+  - Acceptance: the window expression states which placeholder it needs, the
+    authentication check exists once, and no fallback covers a case the database
+    cannot produce.
+  - Verify: 311 tests pass, `npm run test:unit` passes on its own with 185, and
+    `npm run typecheck` is clean.
+  - **`WINDOW_START` became `windowStart(n)`.** As a constant it read as
+    self-contained SQL while silently requiring every caller to bind the day
+    count as `$2`. All three callers did, so nothing was broken; a fourth
+    binding its parameters in another order would have compared against whatever
+    landed in `$2`, which is a wrong answer rather than an error. The
+    `generate_series` calendar moved into `windowCalendar(n)` beside it, so the
+    series and the range filter cannot disagree about which parameter they read.
+  - **`requireUserId` exists once, in `identity.service.ts`.** It was duplicated
+    in the links and analytics route files, which is two copies of the check
+    that decides whether a request is authenticated at all. It takes a session
+    id rather than a request, so the identity module gains no dependency on the
+    HTTP layer, and `src/http/auth.ts` still owns cookie handling.
+  - **`readClickTotals` no longer falls back to zero.** An aggregate with no
+    `group by` returns exactly one row, even over no data, so `?? 0` covered a
+    case the database cannot produce. It now throws if the row is missing, which
+    would mean the query had stopped being an aggregate.
+  - Left alone deliberately: `optionalUserId` in `links.routes.ts`. Link
+    creation treats a bad cookie as absence rather than as a failure, which is a
+    different rule from the one just centralised, and merging them would hide
+    that difference behind a flag.
+
 ## Security review
 
 Not a phase. `SPEC.md` defers one phase after analytics and it is the
