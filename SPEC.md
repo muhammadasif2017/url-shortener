@@ -483,6 +483,15 @@ export async function createLink(input: CreateLinkInput): Promise<Link> {
 - `async`/`await` only. No raw `.then()` chains.
 - Named exports only.
 - Comments explain why, never what. Delete a comment that restates the code.
+- **Every exported function, type, and constant carries a JSDoc docstring.**
+  This is not the same rule as the one above, and the two are easy to confuse.
+  A docstring states what the export is for, what its parameters mean, what it
+  returns, and what it deliberately does not guarantee. An inline comment
+  explains a non-obvious decision at a specific line. A file needs both.
+- A docstring earns its place by carrying something the signature cannot: the
+  invariant a caller must uphold, the failure it will not protect against, the
+  reason a value is what it is. `@param` and `@returns` are included whenever
+  the meaning is not fully obvious from the name and type.
 - Services throw `AppError` with a machine-readable code, a human-readable
   message, and an HTTP status. Only `errorHandler` turns those into responses.
 

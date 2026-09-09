@@ -11,6 +11,7 @@
     "dev": "node --watch --env-file=.env --experimental-strip-types src/index.ts",
     "start": "node --env-file-if-exists=.env --experimental-strip-types src/index.ts",
     "typecheck": "tsc --noEmit",
+    "test:unit": "node --test --experimental-strip-types \"tests/unit/**/*.test.ts\"",
     "pretest": "npm run migrate:test",
     "test": "node --test --env-file=.env.test --experimental-strip-types \"tests/**/*.test.ts\"",
     "test:watch": "node --test --watch --env-file=.env.test --experimental-strip-types \"tests/**/*.test.ts\"",

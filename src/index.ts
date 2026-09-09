@@ -5,11 +5,17 @@
 // toolchain can be verified end to end: TypeScript type checking, Node's
 // runtime type stripping, and the npm scripts that drive both.
 
+/** The facts logged once at startup, so a running process is identifiable. */
 type Startup = {
   readonly node: string;
   readonly env: string;
 };
 
+/**
+ * Collects the runtime facts worth recording at boot.
+ *
+ * @returns The Node version and the resolved environment name.
+ */
 function describeStartup(): Startup {
   return {
     node: process.version,
