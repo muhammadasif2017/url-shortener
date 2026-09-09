@@ -755,10 +755,23 @@ redirects, a drain, and `total` of exactly 3.
 done in `SPEC-analytics.md` holds, including that `pg` is still the only
 production dependency.
 
-One thing this checkpoint cannot show on this machine: the signal path into the
-shutdown sequence. Windows does not deliver a real `SIGTERM`, so the drain is
-proven by calling `performShutdown` directly. Verify the signal case on Linux,
-in the container, alongside the C2 note.
+**The signal path is now verified, in the container.** Windows cannot deliver a
+real `SIGTERM`, so this was run where it can be: `docker build`, then the image
+against the Compose database, then `docker stop`, which sends `SIGTERM` to PID 1.
+
+- The process logged `shutting down` with `signal: "SIGTERM"` and then
+  `shutdown complete`, so the handler ran rather than the process being killed.
+- Container exit code 0, so the sequence finished and exited itself rather than
+  being force-killed at the end of Docker's grace period.
+- Five redirects issued with no pause and immediately followed by `docker stop`
+  all reached the database: the link reports exactly 5 click rows afterwards.
+  That is the drain doing its job on writes still in flight when the signal
+  arrived, which is what could not be shown on Windows.
+- The startup line carries `ipHashSalt` as an eight-character fingerprint, and
+  two runs with different salts logged different fingerprints, so salt rotation
+  is traceable in production logs as designed.
+
+This also closes the verification C2 left open since Phase C.
 
 Phase E is complete. What remains for the project is C5, the deploy, which needs
 your Render account, and success criterion 19 with it.

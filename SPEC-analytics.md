@@ -516,11 +516,12 @@ Integration tests, each against a real server and a real database:
   that arrives while step 1 is still waiting also has its click recorded, which
   is the case a drain placed before step 1 would miss. A failing step returns
   exit code 1 rather than reporting a clean shutdown.
-- The signal path itself is **not verifiable on this machine.** Windows does not
-  deliver a real `SIGTERM`, which is already recorded against task C2 in
-  `tasks/todo.md`, so what a test can reach here is the sequence rather than the
-  handler that calls it. Run the signal case on Linux, in the container, before
-  relying on it.
+- The signal path itself is not reachable from the test suite on Windows, which
+  does not deliver a real `SIGTERM`. It was verified in the container instead:
+  `docker stop` sends `SIGTERM` to PID 1, the process logs `shutting down` and
+  `shutdown complete` and exits 0, and five redirects issued immediately before
+  the stop are all present in the database afterwards. Recorded under
+  Checkpoint E in `tasks/todo.md`.
 
 ## Definition of Done
 
