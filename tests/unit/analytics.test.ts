@@ -2,11 +2,8 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import { hashClientIp, saltFingerprint } from '../../src/lib/ipHash.ts';
-import {
-  createWriteTracker,
-  isBotUserAgent,
-  toClickEvent,
-} from '../../src/modules/analytics/analytics.service.ts';
+import { isBotUserAgent, toClickEvent } from '../../src/modules/analytics/analytics.service.ts';
+import { createWriteTracker } from '../../src/modules/analytics/analytics.writes.ts';
 
 /**
  * Analytics logic that needs neither a database nor a server.
@@ -192,5 +189,26 @@ describe('createWriteTracker', () => {
     // would still have issued the insert, which is the load the cap sheds.
     assert.equal(started, 2);
     assert.equal(tracker.size(), 2);
+  });
+});
+
+describe('shedding episodes', () => {
+  it('accepts again once room appears, and does not stay latched', async () => {
+    const tracker = createWriteTracker({ limit: 1 });
+    let release: () => void = () => undefined;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    assert.equal(tracker.track(() => blocked), true);
+    assert.equal(tracker.track(() => Promise.resolve()), false);
+
+    release();
+    await tracker.drain();
+
+    // The episode state lives in the tracker's closure rather than in module
+    // globals, so it cannot be left set by one caller and read by another.
+    assert.equal(tracker.track(() => Promise.resolve()), true);
+    await tracker.drain();
   });
 });

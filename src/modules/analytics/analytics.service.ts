@@ -13,6 +13,7 @@ import {
   type LinkStats,
   type NewClickEvent,
 } from './analytics.schema.ts';
+import { createWriteTracker } from './analytics.writes.ts';
 
 /**
  * Click recording.
@@ -41,102 +42,6 @@ const BOT_MARKERS: readonly string[] = [
   'wget',
   'headless',
 ];
-
-/**
- * Most click writes allowed to be outstanding at once.
- *
- * The redirect route is not rate limited, on purpose, so this is the one place
- * unauthenticated traffic can grow something without bound. The connection pool
- * holds ten connections, so a burst queues writes faster than they drain, and
- * an uncapped set is memory exhaustion from the same class of traffic the rate
- * limiter's hard cap of 10,000 entries already guards against.
- *
- * Shedding is the correct answer rather than blocking, because losing click
- * events is already accepted and delaying redirects is not.
- */
-const MAX_PENDING_WRITES = 10_000;
-
-/** Tracks writes that have started but not finished. */
-export type WriteTracker = {
-  /**
-   * Starts a write and registers it.
-   *
-   * Takes a function rather than a promise so a refused write is never started
-   * at all. Accepting the promise and then discarding it would still run the
-   * insert, which is the load the limit exists to shed.
-   *
-   * @returns `false` when the tracker is full and nothing was started.
-   */
-  readonly track: (start: () => Promise<unknown>) => boolean;
-  /** Resolves once every registered write has settled. */
-  readonly drain: () => Promise<void>;
-  /** How many writes are outstanding. For tests and diagnostics. */
-  readonly size: () => number;
-};
-
-/** Options for {@link createWriteTracker}. */
-export type WriteTrackerOptions = {
-  /** Most writes outstanding before new ones are refused. */
-  readonly limit?: number;
-};
-
-/**
- * Builds a tracker for fire-and-forget writes.
- *
- * Exported as a factory so its two mandatory properties can be unit tested
- * without a database. Both exist because of failures that are invisible until
- * they are not:
- *
- * 1. **A rejecting write is neutralised on registration.** The promise stored
- *    is one that has already had `.catch()` attached, so a rejection can reach
- *    neither the process nor {@link WriteTracker.drain}. Registering the raw
- *    promise and catching a separate reference would leave the drain awaiting
- *    a rejecting promise, which turns one failed insert into a failed shutdown.
- * 2. **The drain loops until the set is empty.** A single pass over a live set
- *    misses writes added while that pass was pending, and those are exactly the
- *    writes a shutdown is racing.
- *
- * @param options.limit - Most writes outstanding before new ones are refused.
- *   Defaults to {@link MAX_PENDING_WRITES}.
- * @returns A tracker with no writes outstanding.
- */
-export function createWriteTracker(options: WriteTrackerOptions = {}): WriteTracker {
-  const pending = new Set<Promise<void>>();
-  const limit = options.limit ?? MAX_PENDING_WRITES;
-
-  return {
-    track(start) {
-      // Refused before the work begins, so a full tracker stops growing rather
-      // than merely growing more slowly.
-      if (pending.size >= limit) return false;
-
-      // The caught promise is what gets stored, not the original.
-      const settled = start().then(
-        () => undefined,
-        () => undefined,
-      );
-      pending.add(settled);
-      void settled.then(() => {
-        pending.delete(settled);
-      });
-      return true;
-    },
-
-    async drain() {
-      // A write registered while the previous pass was awaiting is still in the
-      // set on the next check, which is why this repeats rather than snapshots.
-      // The loop is unbounded here on purpose: the deadline belongs to the
-      // shutdown sequence, which knows how long the process has left.
-      while (pending.size > 0) {
-        await Promise.all([...pending]);
-      }
-    },
-
-    size() {
-      return pending.size;
-    },
-  };
-}
 
 /** The tracker every click write registers with. */
 const writes = createWriteTracker();
@@ -238,7 +143,10 @@ export function recordClick(input: ClickInput): void {
     return;
   }
 
-  const accepted = writes.track(() =>
+  // The return value is deliberately ignored here. A refused write is already
+  // reported by the tracker, and there is nothing else this module can do about
+  // one: dropping the click is the designed answer to a backlog.
+  writes.track(() =>
     repository.insertClick(event).catch((error: unknown) => {
       log('error', 'click write failed', {
         linkId: event.linkId,
@@ -248,47 +156,6 @@ export function recordClick(input: ClickInput): void {
     }),
   );
 
-  if (accepted) {
-    reportRecovery();
-    return;
-  }
-
-  reportShedding();
-}
-
-/** Whether writes are currently being shed, so the log reports edges only. */
-let shedding = false;
-/** How many clicks have been dropped since shedding began. */
-let droppedClicks = 0;
-
-/**
- * Records that a click was dropped because too many writes are outstanding.
- *
- * Logged on the first drop only. A service already failing to keep up with its
- * own writes does not need a log line per request on top of it.
- */
-function reportShedding(): void {
-  droppedClicks += 1;
-  if (shedding) return;
-
-  shedding = true;
-  log('warn', 'click writes are being shed', { pending: writes.size() });
-}
-
-/**
- * Reports the end of a shedding episode, on the first write accepted after one.
- *
- * Recovery is detected here rather than by awaiting a drain of its own. A
- * second drain over the same tracker resolves at the same moment the shutdown
- * drain does, which would fire this log line while the pool is closing, for a
- * process that is not recovering at all.
- */
-function reportRecovery(): void {
-  if (!shedding) return;
-
-  log('warn', 'click writes recovered', { dropped: droppedClicks });
-  shedding = false;
-  droppedClicks = 0;
 }
 
 /**

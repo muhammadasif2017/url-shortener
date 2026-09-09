@@ -451,9 +451,12 @@ per Project Structure in `SPEC.md`:
   and the `days` and `limit` parsers.
 - `analytics.repository.ts` — the insert and the three aggregate queries.
   Converts counts with `Number()` at this boundary.
-- `analytics.service.ts` — `recordClick()`, the pending-write set,
-  `drainPendingWrites()`, the bot check, and the ownership check before every
-  read.
+- `analytics.service.ts` — `recordClick()`, `drainPendingWrites()`, the bot
+  check, and the ownership check before every read.
+- `analytics.writes.ts` — the pending-write tracker: registration, the drain,
+  the cap, and the shedding episode. A fifth file, because the mechanism is
+  none of the four roles the shape names, and leaving it in the service made
+  that file twice the size of any other module's.
 - `analytics.routes.ts` — the two endpoints.
 
 `recordClick()` is called from the redirect handler in `links.routes.ts`,

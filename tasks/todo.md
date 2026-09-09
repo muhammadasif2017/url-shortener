@@ -795,6 +795,30 @@ your Render account, and success criterion 19 with it.
 
 ---
 
+## Review follow-ups
+
+- [x] **R1. Split the pending-write tracker out of the analytics service** —
+  done
+  - Acceptance: `analytics.service.ts` holds what a click is; the mechanism for
+    running a write nobody waits for lives on its own.
+  - Verify: 311 tests pass, 1 of them new, and `npm run typecheck` is clean.
+  - The service was 400 lines against 208 for the next largest module file. Only
+    about 155 of those were code, so the file was never near a size limit; what
+    made it worth splitting is that it held two unrelated subjects, and the
+    tracker is the one with nothing to do with clicks.
+  - `src/modules/analytics/analytics.writes.ts` now owns registration, the
+    drain, the 10,000 cap, and the shedding episode. The service is 267 lines
+    and reads as click recording plus the two owner-checked reads.
+  - **The shedding state stopped being module globals.** `shedding` and
+    `droppedClicks` were mutable at module scope, written by one function and
+    reset by another, with no way to observe or reset them from a test. They are
+    closure state inside the tracker now, so a test can build one, fill it, and
+    assert the episode ends, which a new unit test does.
+  - This makes the module five files rather than the four-file shape in
+    `SPEC.md`. Recorded in `SPEC-analytics.md` with the reason: the shape exists
+    to separate routes, services, repositories, and schemas, and a mechanism
+    that is none of those is clearer beside them than inside one.
+
 ## Security review
 
 Not a phase. `SPEC.md` defers one phase after analytics and it is the
