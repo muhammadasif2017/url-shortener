@@ -3,6 +3,7 @@ import type { Server } from 'node:http';
 import { env } from './config/env.ts';
 import { saltFingerprint } from './lib/ipHash.ts';
 import { log } from './lib/logger.ts';
+import { analyticsRoutes } from './modules/analytics/analytics.routes.ts';
 import { identityRoutes } from './modules/identity/identity.routes.ts';
 import { linkRoutes } from './modules/links/links.routes.ts';
 import { createAppServer } from './server.ts';
@@ -30,7 +31,11 @@ function main(): void {
   // Every module's routes are assembled here, in one visible list, rather than
   // registered by import side effects. A route that exists only because a file
   // was imported is a route nobody can find later.
-  const server: Server = createAppServer([...linkRoutes, ...identityRoutes]);
+  const server: Server = createAppServer([
+    ...linkRoutes,
+    ...identityRoutes,
+    ...analyticsRoutes,
+  ]);
 
   server.listen(config.port, () => {
     log('info', 'server listening', {

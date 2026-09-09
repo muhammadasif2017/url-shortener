@@ -1,0 +1,72 @@
+import { readSessionId, unauthenticated } from '../../http/auth.ts';
+import type { RequestContext, RouteResponse, RouteTable } from '../../http/context.ts';
+import { json } from '../../http/respond.ts';
+import { AppError } from '../../lib/AppError.ts';
+import { parseBoundedInteger } from '../../lib/validate.ts';
+import * as identityService from '../identity/identity.service.ts';
+import * as analyticsService from './analytics.service.ts';
+import {
+  DEFAULT_WINDOW_DAYS,
+  MAX_WINDOW_DAYS,
+  MIN_WINDOW_DAYS,
+} from './analytics.schema.ts';
+
+/**
+ * HTTP surface for the analytics module.
+ *
+ * Both routes are four segments long, and the router matches only on an equal
+ * segment count, so neither the one-segment redirect nor the three-segment
+ * `/api/links/:slug` can answer them whatever order routes are registered in.
+ */
+
+/**
+ * Resolves the caller's session, requiring one.
+ *
+ * @param context - The request.
+ * @returns The authenticated user's id.
+ * @throws {AppError} 401 when the cookie is missing, unknown, or expired, all
+ *   of which give the same answer so that no session id is confirmed to have
+ *   existed.
+ */
+async function requireUserId(context: RequestContext): Promise<string> {
+  const user = await identityService.resolveSession(readSessionId(context));
+  if (user === undefined) throw unauthenticated();
+  return user.id;
+}
+
+/**
+ * Reads the `days` query parameter.
+ *
+ * @param context - The request.
+ * @returns The window length in days.
+ * @throws {AppError} 400 `VALIDATION_FAILED` when it is not a whole number in
+ *   range, with a field-level detail.
+ */
+function windowDays(context: RequestContext): number {
+  const parsed = parseBoundedInteger(context.query.get('days') ?? undefined, 'days', {
+    min: MIN_WINDOW_DAYS,
+    max: MAX_WINDOW_DAYS,
+    fallback: DEFAULT_WINDOW_DAYS,
+  });
+
+  if (!parsed.ok) throw AppError.validation(parsed.issues);
+  return parsed.value;
+}
+
+/** Every route this module serves. */
+export const analyticsRoutes: RouteTable = [
+  {
+    method: 'GET',
+    path: '/api/links/:slug/stats',
+    async handle(context): Promise<RouteResponse> {
+      const userId = await requireUserId(context);
+      const stats = await analyticsService.readLinkStats(
+        context.params['slug'] ?? '',
+        userId,
+        windowDays(context),
+      );
+
+      return json(200, stats);
+    },
+  },
+];

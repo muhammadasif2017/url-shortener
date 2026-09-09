@@ -1,11 +1,15 @@
 import { env } from '../../config/env.ts';
+import { AppError } from '../../lib/AppError.ts';
 import { hashClientIp } from '../../lib/ipHash.ts';
 import { describeError, log } from '../../lib/logger.ts';
+import type { Link } from '../links/links.schema.ts';
+import * as linkService from '../links/links.service.ts';
 import * as repository from './analytics.repository.ts';
 import {
   MAX_REFERRER_LENGTH,
   MAX_USER_AGENT_LENGTH,
   type ClickInput,
+  type LinkStats,
   type NewClickEvent,
 } from './analytics.schema.ts';
 
@@ -310,4 +314,60 @@ export function drainPendingWrites(): Promise<void> {
  */
 export function pendingWriteCount(): number {
   return writes.size();
+}
+
+/**
+ * Resolves a link the caller is allowed to read statistics for.
+ *
+ * The rule is `deleteLink`'s, not a new one. A slug is public by construction:
+ * it appears in browser history, in referrer headers, and in every chat log the
+ * link passes through, so it cannot also be the credential that guards a link's
+ * click history.
+ *
+ * The link is read before any aggregate query runs, which costs one query and
+ * buys the difference between "no such link" and "not yours".
+ *
+ * @param slug - The slug from the path.
+ * @param userId - The authenticated caller.
+ * @returns The link.
+ * @throws {AppError} 404 when no such slug exists, 403 when it belongs to
+ *   someone else or to nobody. An ownerless link has no owner who can prove
+ *   they created it, so there is no correct person to allow.
+ */
+async function requireOwnedLink(slug: string, userId: string): Promise<Link> {
+  const link = await linkService.getLink(slug);
+
+  if (link.ownerId !== userId) {
+    throw new AppError('FORBIDDEN', 'That link belongs to someone else.', 403);
+  }
+
+  return link;
+}
+
+/**
+ * Reads one link's click statistics.
+ *
+ * Both queries take the same window and the same link, so the totals and the
+ * per-day series always describe the same rows.
+ *
+ * @param slug - The link to report on.
+ * @param userId - The authenticated caller, who must own it.
+ * @param windowDays - Window length in whole UTC days, ending today.
+ * @returns The statistics, with every count already a number.
+ * @throws {AppError} 404 for an unknown slug, 403 for a link the caller does
+ *   not own.
+ */
+export async function readLinkStats(
+  slug: string,
+  userId: string,
+  windowDays: number,
+): Promise<LinkStats> {
+  const link = await requireOwnedLink(slug, userId);
+
+  const [totals, byDay] = await Promise.all([
+    repository.readClickTotals(link.id, windowDays),
+    repository.readClicksByDay(link.id, windowDays),
+  ]);
+
+  return { slug: link.slug, windowDays, ...totals, byDay };
 }

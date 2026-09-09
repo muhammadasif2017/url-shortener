@@ -51,3 +51,50 @@ export type ClickInput = {
   readonly referrer: string | string[] | undefined;
   readonly userAgent: string | string[] | undefined;
 };
+
+/** Smallest reporting window a caller may ask for, in days. */
+export const MIN_WINDOW_DAYS = 1;
+
+/**
+ * Largest reporting window a caller may ask for, in days.
+ *
+ * A bound exists because an unbounded breakdown returns one entry per day for
+ * as long as the link has existed, so the response would grow without limit as
+ * the service ages.
+ */
+export const MAX_WINDOW_DAYS = 90;
+
+/** Window used when the caller asks for none. */
+export const DEFAULT_WINDOW_DAYS = 30;
+
+/** Counts for one link over one window, bot rows already separated out. */
+export type ClickTotals = {
+  /** Clicks that were not from an announced bot. */
+  readonly total: number;
+  /** Distinct visitor hashes among those clicks. */
+  readonly uniqueVisitors: number;
+  /** Clicks excluded from the two figures above. */
+  readonly botClicks: number;
+};
+
+/** One UTC day of the breakdown. */
+export type DailyClicks = {
+  /** The UTC calendar day, as `YYYY-MM-DD`. */
+  readonly date: string;
+  readonly clicks: number;
+};
+
+/**
+ * Everything the statistics endpoint reports.
+ *
+ * Every number is a lower bound. Click writes are not awaited, so a crash
+ * between the response and the insert drops the event. Anything presenting
+ * these figures says so.
+ */
+export type LinkStats = ClickTotals & {
+  readonly slug: string;
+  /** Window length these figures cover, in whole UTC days, ending today. */
+  readonly windowDays: number;
+  /** One entry per day in the window, oldest first, including zeros. */
+  readonly byDay: readonly DailyClicks[];
+};

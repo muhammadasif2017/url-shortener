@@ -674,8 +674,37 @@ so asserting the attributes is what actually catches a mis-scoped deletion.
     path from the signal to it. That wiring is two lines in `src/index.ts` and
     the container runs the process as PID 1 with exec form, so it receives the
     signal directly on Linux. Verify there, alongside the C2 note.
-- [ ] **E5. Stats endpoint** — total and per-day breakdown, counts converted
-      with `Number()` at the repository boundary
+- [x] **E5. Stats endpoint** — done
+  - Acceptance: `GET /api/links/:slug/stats` returns a total, unique visitors,
+    bot clicks, and a dense per-day series, owner-only, over a `days` window of
+    1 to 90 defaulting to 30, with every count a number.
+  - Verify: three redirects then drain then the endpoint reports a total of 3.
+    401 with no session, 403 for another user's link and for an ownerless one,
+    404 for an unknown slug.
+  - Verified: 291 tests pass, 15 of them new, and `npm run typecheck` is clean.
+  - **Checkpoint E is met through the endpoint, not only through the database.**
+    The count-equals-redirects assertion now runs against the HTTP response.
+  - Authorisation reuses `linkService.getLink` and then compares `ownerId`,
+    which is `deleteLink`'s rule rather than a second one. A slug appears in
+    browser history, referrer headers, and every chat log the link passes
+    through, so it is public by construction and cannot also be the credential
+    that guards click history.
+  - The window is computed by the database from `now()`, never passed in as an
+    instant from the application, so one clock decides what today means and it
+    is the clock the rows were written with.
+  - `WINDOW_START` converts the day boundary back to `timestamptz` so that
+    `occurred_at` itself is never wrapped in a function. Comparing
+    `occurred_at at time zone 'UTC'` would have been correct and unusable by
+    `click_events_link_id_occurred_at_idx`, scanning every row for the link.
+  - The three totals are one statement using `filter`, not three round trips,
+    because they read the same rows. Bot clicks are reported separately rather
+    than silently dropped from the total.
+  - A test asserts `typeof` on every count. `count(*)` is `bigint` and arrives
+    from `pg` as a string, so an unconverted total would fail
+    `assert.equal(total, 3)` against `'3'` under `assert/strict`. The conversion
+    happens in the repository, at the same boundary that renames columns.
+  - The window test backdates a row by ten days rather than deleting it, so it
+    proves the window filters rather than proving the row was absent.
 - [ ] **E6. Top referrers**
 
 **Checkpoint E.** After `drainPendingWrites()`, the click count equals the
