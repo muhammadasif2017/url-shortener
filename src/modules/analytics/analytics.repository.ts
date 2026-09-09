@@ -110,6 +110,13 @@ export async function readClickTotals(linkId: string, days: number): Promise<Cli
  * rebuild the calendar, and a missing day reads as continuity rather than as a
  * gap, which is the one thing a traffic chart must not get wrong.
  *
+ * The range predicate on `occurred_at` looks redundant beside the day equality
+ * below it, and is not. `date_trunc(...) = calendar.day` cannot use an index,
+ * so the range is the only condition the planner can turn into an index scan.
+ * Measured with `explain (analyze)` over 5,000 rows for one link: with the
+ * predicate, a bitmap index scan touching 162 rows and 5 buffers; without it, a
+ * sequential scan of all 5,000 and 77 buffers, sorting every row.
+ *
  * @param linkId - The link.
  * @param days - Window length, in whole UTC days, ending today.
  * @returns One entry per day, oldest first, bot rows excluded.

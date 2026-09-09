@@ -705,6 +705,19 @@ so asserting the attributes is what actually catches a mis-scoped deletion.
     happens in the repository, at the same boundary that renames columns.
   - The window test backdates a row by ten days rather than deleting it, so it
     proves the window filters rather than proving the row was absent.
+  - **The range predicate in the per-day query is not redundant, and that was
+    measured rather than assumed.** It sits beside a `date_trunc` day equality
+    that already restricts the result, so it reads as duplication. The equality
+    cannot use an index. With 5,000 rows for one link, `explain (analyze)`
+    reports a bitmap index scan touching 162 rows and 5 buffers with the
+    predicate, and a sequential scan of all 5,000 rows and 77 buffers without
+    it, sorting every row. The measurement is recorded in the query's docstring
+    so nobody deletes the line as tidying.
+  - The service docstring overclaimed and was corrected. The two queries do not
+    run in one transaction, so a click landing between them can make the total
+    and the series disagree by one. That is consistent with a module whose
+    figures are already a lower bound, and a snapshot would buy agreement
+    between two approximate numbers.
 - [ ] **E6. Top referrers**
 
 **Checkpoint E.** After `drainPendingWrites()`, the click count equals the

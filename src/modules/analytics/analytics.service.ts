@@ -347,8 +347,11 @@ async function requireOwnedLink(slug: string, userId: string): Promise<Link> {
 /**
  * Reads one link's click statistics.
  *
- * Both queries take the same window and the same link, so the totals and the
- * per-day series always describe the same rows.
+ * Two queries, not one transaction. A click landing between them can make the
+ * total and the series disagree by one. That is consistent with what this
+ * module already promises: the write is not awaited, so every figure is a lower
+ * bound rather than an exact count, and a snapshot would buy agreement between
+ * two numbers that are both approximate anyway.
  *
  * @param slug - The link to report on.
  * @param userId - The authenticated caller, who must own it.
