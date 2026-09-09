@@ -282,6 +282,32 @@ so an unverified address costs only that a user may mistype their own login. The
 address is stored lowercased and trimmed, so `User@Example.com` and
 `user@example.com` are one account rather than two.
 
+## Resolved: registration discloses that an address is taken
+
+**Resolved.** `POST /api/auth/register` answers `409` `EMAIL_TAKEN`, and that
+tells an unauthenticated caller which addresses have accounts.
+
+This is worth stating because sign-in goes to real lengths to prevent exactly
+that disclosure: one message for an unknown address and a wrong password, and a
+dummy hash verified when no user was found so the timing matches. Registration
+undoes it, so an attacker enumerates there instead and the sign-in defence
+protects less than it appears to.
+
+It stays, because the alternative is worse here. Hiding the conflict means
+answering `201` to a registration that did not happen and telling the real
+account holder by email, and nothing in this service sends email: `SPEC.md`
+excludes an email provider, and no email verification exists for the same
+reason. Answering `201` with no message at all would leave a user unable to tell
+a new account from a typo of their old one.
+
+What reduces it is the credential rate limit: ten attempts per fifteen minutes
+per address, which makes enumeration slow rather than impossible. The sign-in
+protections keep their value against password guessing, which is the attack that
+scales.
+
+Revisit this if the service ever gains an email provider. That is the change
+that makes silent registration possible, and it is the only one.
+
 ## Endpoints
 
 ### `POST /api/auth/register`

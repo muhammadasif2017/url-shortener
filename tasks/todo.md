@@ -792,3 +792,64 @@ This also closes the verification C2 left open since Phase C.
 
 Phase E is complete. What remains for the project is C5, the deploy, which needs
 your Render account, and success criterion 19 with it.
+
+---
+
+## Security review
+
+Not a phase. `SPEC.md` defers one phase after analytics and it is the
+multi-instance one with Nginx, not a security phase; hardening was Phase C. This
+is a single review task, recorded here because two things came out of it that
+change the code or the specs.
+
+- [x] **S1. Security review of the finished service** — done
+  - Acceptance: every claim checked against the source rather than the specs,
+    since a spec that disagrees with the code is what the `VALIDATION_ERROR` and
+    `isUniqueViolation` slips were both made of.
+  - Verify: 310 tests pass, 8 of them new, and `npm run typecheck` is clean.
+
+  **Changed: `X-Content-Type-Options: nosniff` on every response.** It was on
+  none. Added in `send`, so it covers JSON, redirects, and errors alike, and a
+  handler's own headers merge over the default rather than replacing it. Nothing
+  else was added: a Content Security Policy guards markup this API never
+  returns, and HSTS is a promise about a domain that is not deployed, so both
+  would be decoration.
+
+  **Accepted, and now written down: registration discloses that an address is
+  taken.** Sign-in goes to real lengths to prevent that disclosure, with one
+  answer for an unknown address and a wrong password and a dummy hash verified
+  so the timing matches. `POST /api/auth/register` then answers `409`
+  `EMAIL_TAKEN`, so an attacker enumerates there instead. It stays because
+  hiding it requires telling the real account holder by email and this service
+  has no email provider by design. The credential rate limit of ten attempts per
+  fifteen minutes makes it slow. Recorded as a resolved decision in
+  `SPEC-identity.md`, with the one change that would let it be revisited.
+
+  **Considered and declined: `Referrer-Policy`.** It would control what the
+  destination learns about which slug sent a visitor, not what this service
+  receives. Setting `no-referrer` would remove attribution that link owners'
+  own destinations legitimately use, and would improve nothing here.
+
+  Checked and found sound, with no change needed:
+
+  - Every query is parameterised. The only interpolation in any SQL string is
+    `WINDOW_START`, a module constant containing no caller input.
+  - Sessions are 32 random bytes, looked up with `expires_at > now()` in the
+    same statement, so an expired session is indistinguishable from an unknown
+    one. Sign-out deletes the row, and expired rows are purged opportunistically
+    on the next sign-in rather than by a scheduler.
+  - Passwords are `scrypt` with parameters stored in the hash, compared with
+    `timingSafeEqual`, bounded to 12 to 128 characters so a long password cannot
+    be a hashing denial of service.
+  - Nothing logs a password, hash, session id, or `Cookie` header. Error
+    responses carry an `AppError`'s message only; anything else is logged in
+    full and answered with a generic 500.
+  - `GET /api/links/:slug` is unauthenticated by design and exposes neither
+    `ownerId` nor the internal `id`, so it says no more than following the link
+    already does. Now asserted by a test.
+  - `npm audit --omit=dev` reports zero vulnerabilities against the single
+    production dependency.
+  - Response splitting through the `Location` header is not possible: the WHATWG
+    URL parser strips CR and LF while parsing, so a destination containing them
+    is stored without them. That protection is incidental to the parser rather
+    than written anywhere, which is why it now has a regression test.

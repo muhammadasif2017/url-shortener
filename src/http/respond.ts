@@ -76,7 +76,19 @@ export function send(
   result: RouteResponse,
   method: string,
 ): void {
-  const headers: Record<string, string> = { ...result.headers };
+  // Set on every response, including redirects and errors. This service only
+  // ever answers with JSON or an empty body, so there is nothing for a browser
+  // to be right about when it guesses a type, and a wrong guess is how a
+  // response body becomes executable. It costs one header and closes the
+  // question.
+  //
+  // Nothing else is added here. CSP guards markup this API never returns, and
+  // HSTS is a promise about a domain, so both would be decoration rather than
+  // defence. See the security review in `tasks/todo.md`.
+  const headers: Record<string, string> = {
+    'X-Content-Type-Options': 'nosniff',
+    ...result.headers,
+  };
 
   const isHead = method.toUpperCase() === 'HEAD';
   const bodyless = BODYLESS_STATUSES.has(result.status) || result.body === undefined;
