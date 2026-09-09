@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, it } from 'node:test';
 
 import { closePool } from '../../src/db/pool.ts';
+import { identityRoutes } from '../../src/modules/identity/identity.routes.ts';
 import { linkRoutes } from '../../src/modules/links/links.routes.ts';
 import { insertLink, truncateLinks } from '../helpers/db.ts';
 import { startTestServer, type TestServer } from '../helpers/server.ts';
@@ -75,6 +76,43 @@ describe('rate limiting', () => {
     const redirected = await server.fetch('/stillworks');
     assert.equal(redirected.status, 302);
     assert.equal(redirected.headers.get('location'), 'https://example.com/ok');
+  });
+
+  it('limits credential endpoints far more strictly than the rest of the API', async () => {
+    // Each attempt runs scrypt, which costs about 33 MiB and a tenth of a second
+    // of thread-pool work. The general limit would let one address spend six
+    // seconds of hashing per minute on a single-event-loop service.
+    const strict = await startTestServer(identityRoutes, {
+      rateLimit: { max: 1000, windowMs: 60_000 },
+      authRateLimit: { max: 3, windowMs: 60_000 },
+    });
+
+    try {
+      let refused: Response | undefined;
+
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        const response = await strict.fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ email: 'nobody@example.com', password: 'wrong passphrase' }),
+        });
+
+        if (response.status === 429) {
+          refused = response;
+          break;
+        }
+        await response.body?.cancel();
+      }
+
+      assert.ok(refused, 'expected the credential limit to refuse within four attempts');
+      assert.ok(Number(refused.headers.get('retry-after')) >= 1);
+
+      // The general API limit is untouched, so ordinary use keeps working.
+      const other = await strict.fetch('/api/auth/me');
+      assert.equal(other.status, 401);
+    } finally {
+      await strict.close();
+    }
   });
 
   it('leaves the health check reachable while the API is limited', async () => {

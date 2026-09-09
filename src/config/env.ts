@@ -51,13 +51,6 @@ export type Env = {
   readonly rateLimitMax: number;
   readonly rateLimitWindowMs: number;
   readonly sessionTtlSeconds: number;
-  /**
-   * Whether the unauthenticated link administration routes are exposed.
-   *
-   * Off everywhere except local development and integration tests. While it is
-   * on, anyone can list every link and delete any of them.
-   */
-  readonly enableUnauthenticatedLinkAdmin: boolean;
 };
 
 /** Raised when the environment cannot produce a usable configuration. */
@@ -203,8 +196,6 @@ export function loadEnv(source: Source): Env {
     issues.push('IP_HASH_SALT still holds the placeholder from .env.example.');
   }
 
-  const enableUnauthenticatedLinkAdmin = source['ENABLE_UNAUTHENTICATED_LINK_ADMIN'] === '1';
-
   const sslRaw = source['DATABASE_SSL']?.trim();
   if (sslRaw !== undefined && sslRaw !== '' && sslRaw !== 'true' && sslRaw !== 'false') {
     issues.push("DATABASE_SSL must be 'true' or 'false'.");
@@ -212,12 +203,11 @@ export function loadEnv(source: Source): Env {
   const databaseSsl =
     sslRaw === undefined || sslRaw === '' ? nodeEnv === 'production' : sslRaw === 'true';
 
-  // The flag exposes routes that let anyone enumerate every link and delete any
-  // of them. Refusing to start is the only reliable way to keep a local
-  // convenience from reaching production by way of a copied env file.
-  if (enableUnauthenticatedLinkAdmin && nodeEnv === 'production') {
-    issues.push('ENABLE_UNAUTHENTICATED_LINK_ADMIN must not be set in production.');
-  }
+  // ENABLE_UNAUTHENTICATED_LINK_ADMIN used to be validated here. It gated the
+  // listing and deletion routes while they had no ownership check. The identity
+  // module now authenticates those routes properly, so the flag has been
+  // removed rather than left switched off: a flag that can be switched back on
+  // is a flag that eventually is.
 
   if (issues.length > 0) throw new EnvError(issues);
 
@@ -233,7 +223,6 @@ export function loadEnv(source: Source): Env {
     rateLimitMax,
     rateLimitWindowMs,
     sessionTtlSeconds,
-    enableUnauthenticatedLinkAdmin,
   };
 }
 

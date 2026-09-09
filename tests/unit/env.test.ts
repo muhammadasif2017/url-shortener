@@ -44,7 +44,6 @@ describe('loadEnv', () => {
     assert.equal(env.rateLimitMax, 60);
     assert.equal(env.rateLimitWindowMs, 60_000);
     assert.equal(env.sessionTtlSeconds, 604_800);
-    assert.equal(env.enableUnauthenticatedLinkAdmin, false);
   });
 
   it('strips a trailing slash from BASE_URL', () => {
@@ -125,32 +124,12 @@ describe('loadEnv', () => {
     assert.ok(issues.some((message) => message.includes('placeholder')));
   });
 
-  it('refuses to start in production with the unauthenticated admin flag set', () => {
-    const issues = expectIssues(
-      validEnv({
-        NODE_ENV: 'production',
-        BASE_URL: 'https://example.com',
-        ENABLE_UNAUTHENTICATED_LINK_ADMIN: '1',
-      }),
+  it('ignores ENABLE_UNAUTHENTICATED_LINK_ADMIN, which no longer exists', () => {
+    // The flag gated listing and deletion while those routes had no ownership
+    // check. Identity authenticates them now, so the flag was removed rather
+    // than left switched off: a flag that can be switched back on eventually is.
+    assert.doesNotThrow(() =>
+      loadEnv(validEnv({ ENABLE_UNAUTHENTICATED_LINK_ADMIN: '1' })),
     );
-
-    // The flag exposes routes that let anyone list every link and delete any of
-    // them. A copied env file must not be able to carry it into production.
-    assert.ok(
-      issues.some((message) => message.startsWith('ENABLE_UNAUTHENTICATED_LINK_ADMIN')),
-      `got ${JSON.stringify(issues)}`,
-    );
-  });
-
-  it('allows the admin flag outside production', () => {
-    const env = loadEnv(validEnv({ ENABLE_UNAUTHENTICATED_LINK_ADMIN: '1' }));
-    assert.equal(env.enableUnauthenticatedLinkAdmin, true);
-  });
-
-  it('treats any value other than 1 as off', () => {
-    for (const value of ['0', 'true', 'yes', '']) {
-      const env = loadEnv(validEnv({ ENABLE_UNAUTHENTICATED_LINK_ADMIN: value }));
-      assert.equal(env.enableUnauthenticatedLinkAdmin, false);
-    }
   });
 });

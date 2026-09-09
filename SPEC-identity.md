@@ -2,23 +2,19 @@
 
 Module id: `identity`
 Depends on: `links`
-Status: **placeholder — full spec written at the start of Phase D**
+Status: complete; implemented in Phase D
 Parent spec: `SPEC.md`
 
-This module is second in the build order. The detailed endpoint contracts are
-written after `links` is finished and reviewed, because specifying them now
-means guessing at answers that building `links` will supply.
+This module is second in the build order. It was specified after `links` was
+finished, so the contracts below rest on what building `links` actually taught
+rather than on guesses made in advance.
 
-What is recorded here are the decisions already taken, because each one has
-consequences that reach into `links` and `analytics`, and leaving them implicit
-is how they get quietly reversed.
-
-## Objective (provisional)
+## Objective
 
 Give links an owner, so that a person can sign in, see only their own links, and
 be the only one able to delete them.
 
-## Scope (provisional)
+## Scope
 
 In scope:
 
@@ -232,7 +228,7 @@ Consequence for `links`: `owner_id` is nullable, and the listing query must
 distinguish "belongs to nobody" from "belongs to someone else". Once this module
 lands, the listing index becomes `(owner_id, id desc)`.
 
-## Verification (provisional)
+## Verification
 
 Beyond the usual success and failure paths:
 
@@ -253,9 +249,83 @@ Beyond the usual success and failure paths:
 - Registering an existing email surfaces SQLSTATE `23505` on the `users` email
   constraint and returns 409, not a slug-collision error.
 
-## Open questions to resolve before writing the full spec
+## Resolved: session lifetime is absolute
 
-1. Session lifetime beyond the seven-day default, and whether activity extends
-   it or the expiry is absolute.
-2. Whether unauthenticated link creation survives once accounts exist.
-3. Whether an email address is verified in any way before it can be used.
+**Resolved.** Seven days from sign-in, fixed. Activity does not extend it.
+
+A sliding expiry means every authenticated request writes to the sessions table,
+turning a read-only lookup into a write on the hot path. It also means a stolen
+session stays alive for as long as the thief keeps using it, which is the
+opposite of what an expiry is for. The cost is that an active user is signed out
+after seven days, which is a small annoyance and an easy one to explain.
+
+## Resolved: anonymous link creation survives
+
+**Resolved.** `POST /api/links` stays open to unauthenticated callers.
+
+Anonymous creation is the product's simplest useful behaviour, and removing it
+would make the service less useful in order to make the data model tidier. A
+link created without an account keeps a null `owner_id` and cannot be listed or
+deleted through the API, which is the trade the creator accepts by not signing
+in.
+
+This also means `owner_id` must stay nullable forever, not just during the
+migration.
+
+## Resolved: no email verification
+
+**Resolved.** An email address is stored as given and never verified.
+
+Verification needs an email provider, which is another dependency, another set
+of credentials, and another failure mode. Nothing in this service emails anyone,
+so an unverified address costs only that a user may mistype their own login. The
+address is stored lowercased and trimmed, so `User@Example.com` and
+`user@example.com` are one account rather than two.
+
+## Endpoints
+
+### `POST /api/auth/register`
+
+```json
+{ "email": "someone@example.com", "password": "a passphrase of some length" }
+```
+
+- `201` with the created user, and a session cookie already set. Registering and
+  then immediately having to sign in is friction with no security benefit.
+- `400` when the email is malformed or the password is outside 12 to 128
+  characters.
+- `409` `EMAIL_TAKEN` when the address already exists. This is detected by
+  SQLSTATE `23505` on the users email constraint, never by checking first, which
+  would be a race.
+- `415` when the content type is not `application/json`.
+
+### `POST /api/auth/login`
+
+Same body. `200` with the user and a session cookie.
+
+`401` `INVALID_CREDENTIALS` for both an unknown email and a wrong password, with
+the same message and the same timing characteristics. Distinguishing them tells
+an attacker which addresses have accounts.
+
+The password hash is verified even when no user was found, against a dummy hash.
+Skipping the work for an unknown address makes the response measurably faster
+and turns the endpoint into an account enumeration oracle.
+
+### `POST /api/auth/logout`
+
+`204`, always, whether or not a session existed. The row is deleted and the
+cookie is cleared with attributes matching the ones it was set with.
+
+### `GET /api/auth/me`
+
+`200` with the current user, or `401` when the cookie is missing, unknown, or
+expired.
+
+## Table: `users`
+
+| Column | Type | Constraints |
+|---|---|---|
+| `id` | `bigint` | primary key, generated always as identity |
+| `email` | `text` | not null, unique, stored lowercased |
+| `password_hash` | `text` | not null, PHC-style string carrying its parameters |
+| `created_at` | `timestamptz` | not null, default `now()` |

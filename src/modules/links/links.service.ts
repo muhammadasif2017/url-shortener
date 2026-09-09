@@ -30,11 +30,18 @@ const MAX_SLUG_ATTEMPTS = 5;
  * the violation it raises is translated here.
  *
  * @param input - Already-validated request input.
+ * @param ownerId - Who is creating it, or `undefined` for an anonymous caller.
+ *   Anonymous creation is deliberately still allowed: it is the product's
+ *   simplest useful behaviour, and the trade the creator accepts is that an
+ *   ownerless link cannot later be listed or deleted through the API.
  * @returns The stored link.
  * @throws {AppError} 400 when the slug is reserved, 409 when it is taken, 503
  *   when five generated slugs collide in a row.
  */
-export async function createLink(input: CreateLinkInput): Promise<Link> {
+export async function createLink(
+  input: CreateLinkInput,
+  ownerId?: string,
+): Promise<Link> {
   if (input.customSlug !== undefined) {
     // A reserved slug is 400, not 409. It conflicts with no stored row and is
     // knowable without touching the database, which makes it a validation
@@ -50,6 +57,7 @@ export async function createLink(input: CreateLinkInput): Promise<Link> {
         slug: input.customSlug,
         url: input.url,
         expiresAt: input.expiresAt,
+        ownerId,
       });
     } catch (error) {
       if (repository.isSlugConflict(error)) {
@@ -65,6 +73,7 @@ export async function createLink(input: CreateLinkInput): Promise<Link> {
         slug: generateSlug(),
         url: input.url,
         expiresAt: input.expiresAt,
+        ownerId,
       });
     } catch (error) {
       if (!repository.isSlugConflict(error)) throw error;
@@ -124,20 +133,26 @@ export async function getLink(slug: string): Promise<Link> {
 }
 
 /**
- * Lists links, newest first.
+ * Lists one user's links, newest first.
  *
+ * Always scoped to an owner. There is no way to ask this function for every
+ * link, and no repository query that would answer such a request.
+ *
+ * @param options.ownerId - Whose links to list.
  * @param options.limit - Page size.
  * @param options.cursorId - Id to page from, or absent for the first page.
  * @returns The page, and the cursor for the next one.
  */
 export async function listLinks(options: {
+  readonly ownerId: string;
   readonly limit: number;
   readonly cursorId?: string | undefined;
 }): Promise<{ readonly links: readonly Link[]; readonly nextCursorId: string | null }> {
   // One extra row, purely to learn whether another page exists. Asking with a
   // separate count query would be a second round trip and could disagree with
   // this one if a row were inserted between them.
-  const rows = await repository.list({
+  const rows = await repository.listByOwner({
+    ownerId: options.ownerId,
     limit: options.limit + 1,
     cursorId: options.cursorId,
   });
@@ -153,14 +168,31 @@ export async function listLinks(options: {
 }
 
 /**
- * Deletes a link.
+ * Deletes a link the caller owns.
+ *
+ * The row is read before it is deleted, which costs one extra query and buys
+ * the difference between 404 and 403. Deleting with an owner filter in the
+ * `where` clause would be one query, but every failure would look like "no such
+ * link", and the caller could not tell a typo from someone else's link.
+ *
+ * An ownerless link cannot be deleted by anybody. Nobody can prove they created
+ * it, so there is no correct person to allow.
  *
  * @param slug - The slug to delete.
- * @throws {AppError} 404 when no such slug exists.
+ * @param userId - The authenticated caller.
+ * @throws {AppError} 404 when no such slug exists, 403 when it belongs to
+ *   someone else or to nobody.
  */
-export async function deleteLink(slug: string): Promise<void> {
-  const deleted = await repository.remove(slug);
-  if (!deleted) {
+export async function deleteLink(slug: string, userId: string): Promise<void> {
+  const link = await repository.findBySlug(slug);
+
+  if (link === undefined) {
     throw AppError.notFound('LINK_NOT_FOUND', 'No such link.');
   }
+
+  if (link.ownerId !== userId) {
+    throw new AppError('FORBIDDEN', 'That link belongs to someone else.', 403);
+  }
+
+  await repository.remove(slug);
 }

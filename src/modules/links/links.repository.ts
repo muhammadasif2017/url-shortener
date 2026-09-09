@@ -19,10 +19,11 @@ type LinkRow = {
   readonly url: string;
   readonly expires_at: Date | null;
   readonly created_at: Date;
+  readonly owner_id: string | null;
 };
 
 /** Columns every query selects, so a row always maps the same way. */
-const COLUMNS = 'id, slug, url, expires_at, created_at';
+const COLUMNS = 'id, slug, url, expires_at, created_at, owner_id';
 
 /**
  * Converts a database row to the shape the rest of the service uses.
@@ -41,6 +42,7 @@ function toLink(row: LinkRow): Link {
     url: row.url,
     expiresAt: row.expires_at,
     createdAt: row.created_at,
+    ownerId: row.owner_id,
   };
 }
 
@@ -49,6 +51,8 @@ export type InsertLink = {
   readonly slug: string;
   readonly url: string;
   readonly expiresAt?: Date | undefined;
+  /** Owner, or absent for an anonymous link. */
+  readonly ownerId?: string | undefined;
 };
 
 /**
@@ -65,10 +69,10 @@ export type InsertLink = {
  */
 export async function insert(input: InsertLink): Promise<Link> {
   const result = await pool().query<LinkRow>(
-    `insert into links (slug, url, expires_at)
-     values ($1, $2, $3)
+    `insert into links (slug, url, expires_at, owner_id)
+     values ($1, $2, $3, $4)
      returning ${COLUMNS}`,
-    [input.slug, input.url, input.expiresAt ?? null],
+    [input.slug, input.url, input.expiresAt ?? null, input.ownerId ?? null],
   );
 
   const row = result.rows[0];
@@ -126,26 +130,41 @@ export async function isExpired(slug: string): Promise<boolean> {
  * `OFFSET` is not used. It scans and discards every preceding row, and rows
  * inserted while paging shift the offset, so items are seen twice or missed.
  *
+ * Scoped to one owner. There is no query here that lists every link
+ * regardless of owner, and that absence is deliberate: an endpoint cannot
+ * accidentally expose other people's links if the query to do so does not
+ * exist.
+ *
+ * The `(owner_id, id desc)` index matches this shape exactly, so the database
+ * walks the index backwards and stops at the page size instead of scanning
+ * every link ever stored.
+ *
+ * @param options.ownerId - Whose links to return.
  * @param options.limit - Maximum rows to return.
  * @param options.cursorId - Return rows with an id below this. Absent for the
  *   first page.
  * @returns Up to `limit` links, newest first.
  */
-export async function list(options: {
+export async function listByOwner(options: {
+  readonly ownerId: string;
   readonly limit: number;
   readonly cursorId?: string | undefined;
 }): Promise<Link[]> {
-  const { limit, cursorId } = options;
+  const { ownerId, limit, cursorId } = options;
 
   const result =
     cursorId === undefined
       ? await pool().query<LinkRow>(
-          `select ${COLUMNS} from links order by id desc limit $1`,
-          [limit],
+          `select ${COLUMNS} from links
+           where owner_id = $1
+           order by id desc limit $2`,
+          [ownerId, limit],
         )
       : await pool().query<LinkRow>(
-          `select ${COLUMNS} from links where id < $1 order by id desc limit $2`,
-          [cursorId, limit],
+          `select ${COLUMNS} from links
+           where owner_id = $1 and id < $2
+           order by id desc limit $3`,
+          [ownerId, cursorId, limit],
         );
 
   return result.rows.map(toLink);
@@ -154,9 +173,13 @@ export async function list(options: {
 /**
  * Deletes a link.
  *
+ * Takes no owner filter. Whether the caller may delete this link is a business
+ * rule, decided by the service after it has read the row, because answering 403
+ * rather than 404 requires knowing that the link exists and belongs to somebody
+ * else.
+ *
  * @param slug - The slug to delete.
- * @returns `true` when a row was deleted, `false` when none matched. The
- *   distinction is what separates a 204 from a 404.
+ * @returns `true` when a row was deleted, `false` when none matched.
  */
 export async function remove(slug: string): Promise<boolean> {
   const result = await pool().query('delete from links where slug = $1', [slug]);

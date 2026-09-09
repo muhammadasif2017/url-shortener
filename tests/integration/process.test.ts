@@ -60,7 +60,6 @@ async function startChild(env: Record<string, string>): Promise<Child> {
         ...process.env,
         PORT: String(port),
         BASE_URL: `http://127.0.0.1:${port}`,
-        ENABLE_UNAUTHENTICATED_LINK_ADMIN: '',
         ...env,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -97,12 +96,10 @@ async function startChild(env: Record<string, string>): Promise<Child> {
   };
 }
 
-describe('unauthenticated admin routes are closed by default', () => {
+describe('link administration requires authentication', () => {
   let child: Child;
 
   before(async () => {
-    // The flag is deliberately absent. Until the identity module exists, these
-    // routes let anyone list every link and delete any of them.
     child = await startChild({});
   });
 
@@ -110,28 +107,34 @@ describe('unauthenticated admin routes are closed by default', () => {
     await child.stop();
   });
 
-  it('returns 404 for listing', async () => {
+  it('returns 401 for listing without a session', async () => {
     const response = await fetch(`${child.url}/api/links`);
-    assert.equal(response.status, 404);
+    assert.equal(response.status, 401);
   });
 
-  it('returns 404 for deletion', async () => {
+  it('returns 401 for deletion without a session', async () => {
     const response = await fetch(`${child.url}/api/links/anything`, { method: 'DELETE' });
-    assert.equal(response.status, 404);
+    assert.equal(response.status, 401);
   });
 
-  it('answers 404 rather than 403, so the route is not confirmed to exist', async () => {
-    const response = await fetch(`${child.url}/api/links`);
+  it('gives the same answer for a forged session id as for none at all', async () => {
+    // Distinguishing "unknown session" from "no session" would tell a caller
+    // which session ids once existed.
+    const response = await fetch(`${child.url}/api/links`, {
+      headers: { cookie: 'session=aW52ZW50ZWQtc2Vzc2lvbi1pZGVudGlmaWVy' },
+    });
+
+    assert.equal(response.status, 401);
     const body = (await response.json()) as { error: { code: string } };
-    assert.equal(body.error.code, 'NOT_FOUND');
+    assert.equal(body.error.code, 'UNAUTHENTICATED');
   });
 
-  it('still allows link creation and redirection', async () => {
-    // The gate closes administration, not the product.
+  it('still allows anonymous link creation and redirection', async () => {
+    // Authentication gates administration, not the product.
     const created = await fetch(`${child.url}/api/links`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ url: 'https://example.com/gated' }),
+      body: JSON.stringify({ url: 'https://example.com/anonymous' }),
     });
 
     assert.equal(created.status, 201);
@@ -139,45 +142,11 @@ describe('unauthenticated admin routes are closed by default', () => {
 
     const followed = await fetch(`${child.url}/${slug}`, { redirect: 'manual' });
     assert.equal(followed.status, 302);
-    assert.equal(followed.headers.get('location'), 'https://example.com/gated');
+    assert.equal(followed.headers.get('location'), 'https://example.com/anonymous');
   });
 });
 
 describe('startup refuses an unsafe configuration', () => {
-  it('will not start in production with the admin flag set', async () => {
-    // A copied environment file is exactly how a local convenience reaches
-    // production. Refusing to start is the only reliable way to stop it.
-    const port = await freePort();
-
-    const child = spawn(
-      process.execPath,
-      ['--experimental-strip-types', 'src/index.ts'],
-      {
-        cwd: ROOT,
-        env: {
-          ...process.env,
-          NODE_ENV: 'production',
-          PORT: String(port),
-          BASE_URL: 'https://example.com',
-          ENABLE_UNAUTHENTICATED_LINK_ADMIN: '1',
-        },
-        stdio: ['ignore', 'pipe', 'pipe'],
-      },
-    );
-
-    let stderr = '';
-    child.stderr?.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString('utf8');
-    });
-
-    const code = await new Promise<number | null>((resolve) => {
-      child.once('exit', resolve);
-    });
-
-    assert.notEqual(code, 0, 'expected a non-zero exit');
-    assert.match(stderr, /ENABLE_UNAUTHENTICATED_LINK_ADMIN/);
-  });
-
   it('will not start with a missing required variable', async () => {
     const child = spawn(
       process.execPath,

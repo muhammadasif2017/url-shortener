@@ -1,8 +1,10 @@
 import { env } from '../../config/env.ts';
-import type { RouteResponse, RouteTable } from '../../http/context.ts';
+import { readSessionId, requireJsonContentType, unauthenticated } from '../../http/auth.ts';
+import type { RequestContext, RouteResponse, RouteTable } from '../../http/context.ts';
 import { json, noContent, redirect } from '../../http/respond.ts';
 import { AppError } from '../../lib/AppError.ts';
 import { parseBoundedInteger } from '../../lib/validate.ts';
+import * as identityService from '../identity/identity.service.ts';
 import { parseCreateLinkInput, type Link } from './links.schema.ts';
 import * as linkService from './links.service.ts';
 
@@ -75,19 +77,33 @@ function decodeCursor(cursor: string): string {
 }
 
 /**
- * Rejects a request when the unauthenticated administration routes are off.
+ * Resolves the caller's session, requiring one.
  *
- * These routes have no ownership check until the identity module exists, so
- * while they are enabled anyone can list every link and delete any of them.
- * They answer 404 rather than 403 when disabled, because a 403 would confirm
- * the route exists.
- *
- * @throws {AppError} 404 when the flag is not set.
+ * @param context - The request.
+ * @returns The authenticated user's id.
+ * @throws {AppError} 401 when the cookie is missing, unknown, or expired. All
+ *   three give the same answer, because distinguishing them would reveal which
+ *   session ids once existed.
  */
-function requireAdminRoutes(): void {
-  if (!env().enableUnauthenticatedLinkAdmin) {
-    throw AppError.notFound('NOT_FOUND', 'No such endpoint.');
-  }
+async function requireUserId(context: RequestContext): Promise<string> {
+  const user = await identityService.resolveSession(readSessionId(context));
+  if (user === undefined) throw unauthenticated();
+  return user.id;
+}
+
+/**
+ * Resolves the caller's session, allowing none.
+ *
+ * Used by link creation, which stays open to anonymous callers. A bad or
+ * expired cookie is treated as absence rather than as a failure: the request is
+ * valid either way, and the only consequence is that the link has no owner.
+ *
+ * @param context - The request.
+ * @returns The user's id, or `undefined`.
+ */
+async function optionalUserId(context: RequestContext): Promise<string | undefined> {
+  const user = await identityService.resolveSession(readSessionId(context));
+  return user?.id;
 }
 
 /**
@@ -115,6 +131,8 @@ export const linkRoutes: RouteTable = [
     method: 'POST',
     path: '/api/links',
     async handle(context): Promise<RouteResponse> {
+      requireJsonContentType(context);
+
       const parsed = parseCreateLinkInput(context.body, {
         baseUrl: env().baseUrl,
         now: new Date(),
@@ -122,7 +140,7 @@ export const linkRoutes: RouteTable = [
 
       if (!parsed.ok) throw AppError.validation(parsed.issues);
 
-      const link = await linkService.createLink(parsed.value);
+      const link = await linkService.createLink(parsed.value, await optionalUserId(context));
       return json(201, toLinkResponse(link));
     },
   },
@@ -130,7 +148,7 @@ export const linkRoutes: RouteTable = [
     method: 'GET',
     path: '/api/links',
     async handle(context): Promise<RouteResponse> {
-      requireAdminRoutes();
+      const ownerId = await requireUserId(context);
 
       const limit = parseBoundedInteger(
         context.query.get('limit') ?? undefined,
@@ -142,7 +160,7 @@ export const linkRoutes: RouteTable = [
       const rawCursor = context.query.get('cursor');
       const cursorId = rawCursor === null ? undefined : decodeCursor(rawCursor);
 
-      const page = await linkService.listLinks({ limit: limit.value, cursorId });
+      const page = await linkService.listLinks({ ownerId, limit: limit.value, cursorId });
 
       return json(200, {
         data: page.links.map(toLinkResponse),
@@ -162,8 +180,8 @@ export const linkRoutes: RouteTable = [
     method: 'DELETE',
     path: '/api/links/:slug',
     async handle(context): Promise<RouteResponse> {
-      requireAdminRoutes();
-      await linkService.deleteLink(context.params['slug'] ?? '');
+      const userId = await requireUserId(context);
+      await linkService.deleteLink(context.params['slug'] ?? '', userId);
       return noContent();
     },
   },

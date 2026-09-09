@@ -29,6 +29,22 @@ const BODY_METHODS: ReadonlySet<string> = new Set(['POST', 'PUT', 'PATCH']);
 /** How long the health check waits for the database before giving up. */
 const HEALTH_TIMEOUT_MS = 2_000;
 
+/** Attempts permitted per window on the credential endpoints. */
+const AUTH_RATE_LIMIT_MAX = 10;
+/** Window for the credential endpoints: fifteen minutes. */
+const AUTH_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
+
+/**
+ * Paths that hash a password and therefore need the stricter limit.
+ *
+ * Sign-out and the current-user route are absent: neither hashes anything, and
+ * rate limiting sign-out would leave someone unable to end their own session.
+ */
+const CREDENTIAL_PATHS: ReadonlySet<string> = new Set([
+  '/api/auth/login',
+  '/api/auth/register',
+]);
+
 /**
  * The health route.
  *
@@ -108,6 +124,8 @@ export type ServerOptions = {
    * on which files ran first.
    */
   readonly rateLimit?: { readonly max: number; readonly windowMs: number };
+  /** Overrides for the stricter credential-endpoint limit. */
+  readonly authRateLimit?: { readonly max: number; readonly windowMs: number };
 };
 
 /**
@@ -128,6 +146,17 @@ export function createAppServer(
   const rateLimiter = createRateLimiter({
     max: options.rateLimit?.max ?? config.rateLimitMax,
     windowMs: options.rateLimit?.windowMs ?? config.rateLimitWindowMs,
+  });
+
+  // Credential endpoints get their own, far stricter limiter, and it is not a
+  // nicety. Each attempt runs scrypt, which costs about 33 MiB and a tenth of a
+  // second of thread-pool work. The general limit of sixty per minute would let
+  // one address spend six seconds of hashing per minute, on a service that has
+  // a single event loop to serve every redirect. It also slows credential
+  // stuffing from thousands of guesses an hour to forty.
+  const authRateLimiter = createRateLimiter({
+    max: options.authRateLimit?.max ?? AUTH_RATE_LIMIT_MAX,
+    windowMs: options.authRateLimit?.windowMs ?? AUTH_RATE_LIMIT_WINDOW_MS,
   });
 
   const server = createServer((request, response) => {
@@ -178,7 +207,8 @@ export function createAppServer(
         config.trustProxyHops,
       );
 
-      const decision = rateLimiter.check(clientIp);
+      const limiter = CREDENTIAL_PATHS.has(url.pathname) ? authRateLimiter : rateLimiter;
+      const decision = limiter.check(clientIp);
       if (!decision.allowed) {
         send(
           response,

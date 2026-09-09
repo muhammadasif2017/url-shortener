@@ -368,26 +368,94 @@ Outstanding, and neither can be done from here:
 
 ## Phase D — identity module
 
-- [ ] **D1. Complete `SPEC-identity.md`**
-  - Acceptance: the three open questions resolved, every endpoint contract
-    written.
-  - Verify: reviewed before any identity code is written.
+- [x] **D1. Complete `SPEC-identity.md`** — done
+  - All three open questions resolved, with reasoning recorded in the spec:
+    session lifetime is absolute rather than sliding, anonymous link creation
+    survives, and email addresses are never verified.
+  - A sliding expiry was rejected because it turns every authenticated request
+    into a write, and because it keeps a stolen session alive for as long as the
+    thief keeps using it.
 
-- [ ] **D2. `users` and `sessions` tables** — migration `002`
-- [ ] **D3. `scrypt` hashing** with the specified parameters, `maxmem`, stored
-      format, async form only, and a length check before `timingSafeEqual`
-- [ ] **D4. Register, login, logout, current user**, with the cookie attributes
-      from the spec including the environment-dependent `__Host-` prefix
-- [ ] **D5. Content-type guard** returning 415 on state-changing routes
-- [ ] **D6. `owner_id` on `links`** — migration `003`, nullable, with the
-      `(owner_id, id desc)` index
-- [ ] **D7. Authorisation**: scope listing to the owner, 403 on cross-user
-      delete, then remove `ENABLE_UNAUTHENTICATED_LINK_ADMIN` entirely
-- [ ] **D8. Stricter rate limit on sign-in and registration**, 10 per 15 minutes
+- [x] **D2. `users` and `sessions` tables** — migration `002`
+  - Constraints enforce what the application also checks: the email is unique,
+    lowercase, and shaped like an address; a session id has a plausible length;
+    and an expiry must follow creation.
+  - `sessions_user_id_idx` exists so the delete cascade, and a future "sign out
+    everywhere", stay fast.
 
-**Checkpoint D.** Cookie is `HttpOnly` and `Secure`. Unknown and expired
-sessions return 401. Sign-out deletes the row and the old cookie fails, proven
-from a path other than `/`. Cross-user delete returns 403.
+- [x] **D3. `scrypt` hashing** — done
+  - `N=32768, r=8, p=1`, 32-byte key, 16-byte salt, `maxmem` raised to 64 MiB.
+  - **Real vulnerability found and fixed here.** `timingSafeEqual` on two
+    zero-length buffers returns `true`, so a stored hash of `scrypt$N=...$$`
+    would have authenticated any password for that account. The parser now
+    rejects an implausibly short salt or digest. There is a test for it.
+  - Absurd stored parameters are also rejected, so a poisoned row cannot turn
+    one sign-in attempt into a denial of service.
+  - Async `scrypt` only, never `scryptSync`, which would block the single event
+    loop for about a tenth of a second per attempt.
+  - `promisify(scrypt)` needed an explicit type: it resolves to the overload
+    without options, so the cost parameters would not type-check.
+
+- [x] **D4. Register, login, logout, current user** — done
+  - Verified: 24 integration tests.
+  - Sign-in verifies a password even when no user was found, against a dummy
+    hash built once at startup. Skipping that work makes the response measurably
+    faster for unregistered addresses, which turns the endpoint into an account
+    enumeration oracle answering by timing alone.
+  - A malformed login body returns 401, not 400. A validation error there would
+    confirm an address exists, or reveal the password policy to someone guessing.
+  - The cookie name is environment-dependent: `__Host-session` in production,
+    `session` locally, because the prefix requires `Secure` and `Secure` cookies
+    are not stored over plain HTTP.
+  - One test asserts the response body contains neither the password, nor the
+    string `scrypt`, nor the word `hash`.
+
+- [x] **D5. Content-type guard** — done
+  - 415 on state-changing routes when the media type is not `application/json`.
+  - The media type is parsed rather than compared as a string, so
+    `application/json; charset=utf-8` is accepted. A missing header is rejected.
+  - Both cases have tests.
+
+- [x] **D6. `owner_id` on `links`** — migration `003`
+  - Nullable permanently, not transitionally, because anonymous creation
+    survives and keeps producing ownerless rows.
+  - `links_owner_id_idx` on `(owner_id, id desc)` matches the listing query
+    exactly, so the database walks the index backwards instead of scanning every
+    link ever stored.
+
+- [x] **D7. Authorisation** — done
+  - Listing is scoped to the owner. There is no repository query that returns
+    every link regardless of owner, and that absence is the point: an endpoint
+    cannot leak other people's links if the query to do so does not exist.
+  - Deletion reads the row first, which costs one query and buys the difference
+    between 404 and 403. A single delete with an owner filter would make every
+    failure look like "no such link".
+  - An ownerless link cannot be deleted by anyone. Nobody can prove they created
+    it, so there is no correct person to allow.
+  - `ENABLE_UNAUTHENTICATED_LINK_ADMIN` is removed entirely, not left switched
+    off. A flag that can be switched back on eventually is.
+  - Verified: cross-user deletion returns 403 and the link survives; the
+    anonymous link is refused; listing shows only the caller's own links, with an
+    ownerless link present in the table and absent from the results.
+
+- [x] **D8. Stricter rate limit on sign-in and registration** — done
+  - Ten attempts per fifteen minutes, against sixty per minute elsewhere.
+  - This is not politeness. Each attempt runs `scrypt`, costing about 33 MiB and
+    a tenth of a second of thread-pool work, so the general limit would let one
+    address spend six seconds of hashing per minute on a service with a single
+    event loop. It also slows credential stuffing from thousands of guesses an
+    hour to forty.
+  - Sign-out and the current-user route are exempt: neither hashes anything, and
+    throttling sign-out would leave someone unable to end their own session.
+
+**Checkpoint D — PASSED.** 237 tests pass, 173 unit and 64 integration. `pg` is
+still the only production dependency.
+
+The one item narrowed rather than dropped: sign-out is proven to delete the row
+and invalidate the cookie, and the clearing cookie is asserted to carry `Path=/`
+and `Max-Age=0`. Issuing the follow-up request from a different path was the
+original plan, but `fetch` sends a cookie the test supplies regardless of path,
+so asserting the attributes is what actually catches a mis-scoped deletion.
 
 ---
 

@@ -2,7 +2,14 @@ import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, it } from 'node:test';
 
 import { closePool } from '../../src/db/pool.ts';
+import { identityRoutes } from '../../src/modules/identity/identity.routes.ts';
 import { linkRoutes } from '../../src/modules/links/links.routes.ts';
+import {
+  authHeaders,
+  registerAccount,
+  truncateUsers,
+  type TestAccount,
+} from '../helpers/auth.ts';
 import { insertLink, truncateLinks } from '../helpers/db.ts';
 import { startTestServer, type TestServer } from '../helpers/server.ts';
 
@@ -17,12 +24,41 @@ import { startTestServer, type TestServer } from '../helpers/server.ts';
 let server: TestServer;
 
 before(async () => {
-  server = await startTestServer(linkRoutes);
+  // Several tests here register accounts to exercise ownership, which is more
+  // than the production credential limit allows. That limit is tested on its own
+  // server in rateLimit.test.ts.
+  server = await startTestServer([...linkRoutes, ...identityRoutes], {
+    authRateLimit: { max: 10_000, windowMs: 60_000 },
+  });
 });
 
 beforeEach(async () => {
+  await truncateUsers();
   await truncateLinks();
 });
+
+/**
+ * Creates a link owned by an account, through the API.
+ *
+ * Ownership cannot be arranged with a direct insert here, because the point of
+ * these tests is that the API attributes a link to the session that created it.
+ */
+async function createOwnedLink(
+  account: TestAccount,
+  body: Record<string, unknown>,
+): Promise<string> {
+  const response = await server.fetch('/api/links', {
+    method: 'POST',
+    headers: authHeaders(account.cookie, { 'content-type': 'application/json' }),
+    body: JSON.stringify(body),
+  });
+
+  if (response.status !== 201) {
+    throw new Error(`Create failed with ${response.status}: ${await response.text()}`);
+  }
+
+  return ((await response.json()) as { slug: string }).slug;
+}
 
 after(async () => {
   await server.close();
@@ -133,24 +169,37 @@ describe('GET /api/links/:slug', () => {
 });
 
 describe('GET /api/links', () => {
-  it('returns links newest first', async () => {
-    await insertLink({ slug: 'first' });
-    await insertLink({ slug: 'second' });
-    await insertLink({ slug: 'third' });
+  it('requires a session', async () => {
+    assert.equal((await server.fetch('/api/links')).status, 401);
+  });
 
-    const response = await server.fetch('/api/links');
+  it('returns only the caller\'s own links, newest first', async () => {
+    const mine = await registerAccount(server);
+    const theirs = await registerAccount(server);
+
+    await createOwnedLink(mine, { url: 'https://example.com/1', customSlug: 'mine1' });
+    await createOwnedLink(theirs, { url: 'https://example.com/x', customSlug: 'theirs' });
+    await createOwnedLink(mine, { url: 'https://example.com/2', customSlug: 'mine2' });
+
+    // An anonymous link belongs to nobody and must appear in no listing.
+    await insertLink({ slug: 'orphan' });
+
+    const response = await server.fetch('/api/links', {
+      headers: authHeaders(mine.cookie),
+    });
     const body = (await response.json()) as { data: { slug: string }[] };
 
     assert.deepEqual(
       body.data.map((link) => link.slug),
-      ['third', 'second', 'first'],
+      ['mine2', 'mine1'],
     );
   });
 
   it('pages without duplicating or missing a row', async () => {
-    // Three characters minimum, enforced by the links_slug_length constraint.
+    const account = await registerAccount(server);
+
     for (const slug of ['pg1', 'pg2', 'pg3', 'pg4', 'pg5']) {
-      await insertLink({ slug });
+      await createOwnedLink(account, { url: 'https://example.com/p', customSlug: slug });
     }
 
     const seen: string[] = [];
@@ -158,11 +207,11 @@ describe('GET /api/links', () => {
     let pages = 0;
 
     do {
-      const path: string = cursor === null ? '/api/links?limit=2' : `/api/links?limit=2&cursor=${cursor}`;
-      const body = (await (await server.fetch(path)).json()) as {
-        data: { slug: string }[];
-        nextCursor: string | null;
-      };
+      const path: string =
+        cursor === null ? '/api/links?limit=2' : `/api/links?limit=2&cursor=${cursor}`;
+      const body = (await (
+        await server.fetch(path, { headers: authHeaders(account.cookie) })
+      ).json()) as { data: { slug: string }[]; nextCursor: string | null };
 
       seen.push(...body.data.map((link) => link.slug));
       cursor = body.nextCursor;
@@ -176,34 +225,54 @@ describe('GET /api/links', () => {
   });
 
   it('returns a null cursor on the last page', async () => {
-    await insertLink({ slug: 'only' });
+    const account = await registerAccount(server);
+    await createOwnedLink(account, { url: 'https://example.com/o', customSlug: 'only' });
 
-    const body = (await (await server.fetch('/api/links?limit=10')).json()) as {
-      nextCursor: string | null;
-    };
+    const body = (await (
+      await server.fetch('/api/links?limit=10', { headers: authHeaders(account.cookie) })
+    ).json()) as { nextCursor: string | null };
 
     assert.equal(body.nextCursor, null);
   });
 
   it('rejects a malformed cursor', async () => {
-    const response = await server.fetch('/api/links?cursor=not-a-real-cursor');
+    const account = await registerAccount(server);
+    const response = await server.fetch('/api/links?cursor=not-a-real-cursor', {
+      headers: authHeaders(account.cookie),
+    });
 
     assert.equal(response.status, 400);
     assert.equal(((await response.json()) as ErrorBody).error.code, 'INVALID_CURSOR');
   });
 
   it('rejects a limit outside the allowed range', async () => {
-    assert.equal((await server.fetch('/api/links?limit=0')).status, 400);
-    assert.equal((await server.fetch('/api/links?limit=101')).status, 400);
-    assert.equal((await server.fetch('/api/links?limit=abc')).status, 400);
+    const account = await registerAccount(server);
+    const headers = authHeaders(account.cookie);
+
+    assert.equal((await server.fetch('/api/links?limit=0', { headers })).status, 400);
+    assert.equal((await server.fetch('/api/links?limit=101', { headers })).status, 400);
+    assert.equal((await server.fetch('/api/links?limit=abc', { headers })).status, 400);
   });
 });
 
 describe('DELETE /api/links/:slug', () => {
-  it('deletes and then reports the slug as gone on both routes', async () => {
+  it('requires a session', async () => {
     await insertLink({ slug: 'doomed' });
+    assert.equal(
+      (await server.fetch('/api/links/doomed', { method: 'DELETE' })).status,
+      401,
+    );
+  });
 
-    const deleted = await server.fetch('/api/links/doomed', { method: 'DELETE' });
+  it('deletes an owned link and then reports it gone on both routes', async () => {
+    const account = await registerAccount(server);
+    await createOwnedLink(account, { url: 'https://example.com/d', customSlug: 'doomed' });
+
+    const deleted = await server.fetch('/api/links/doomed', {
+      method: 'DELETE',
+      headers: authHeaders(account.cookie),
+    });
+
     assert.equal(deleted.status, 204);
     assert.equal(await deleted.text(), '');
 
@@ -211,8 +280,45 @@ describe('DELETE /api/links/:slug', () => {
     assert.equal((await server.fetch('/api/links/doomed')).status, 404);
   });
 
+  it('returns 403 when the link belongs to someone else', async () => {
+    const owner = await registerAccount(server);
+    const stranger = await registerAccount(server);
+
+    await createOwnedLink(owner, { url: 'https://example.com/p', customSlug: 'private' });
+
+    const response = await server.fetch('/api/links/private', {
+      method: 'DELETE',
+      headers: authHeaders(stranger.cookie),
+    });
+
+    // 403 rather than 404, and the difference is deliberate: the caller can
+    // tell a typo from someone else's link.
+    assert.equal(response.status, 403);
+    assert.equal(((await response.json()) as ErrorBody).error.code, 'FORBIDDEN');
+
+    // And the link survives.
+    assert.equal((await server.fetch('/api/links/private')).status, 200);
+  });
+
+  it('refuses to delete an anonymous link, which nobody can prove they own', async () => {
+    const account = await registerAccount(server);
+    await insertLink({ slug: 'orphan' });
+
+    const response = await server.fetch('/api/links/orphan', {
+      method: 'DELETE',
+      headers: authHeaders(account.cookie),
+    });
+
+    assert.equal(response.status, 403);
+  });
+
   it('returns 404 when the slug never existed', async () => {
-    const response = await server.fetch('/api/links/never', { method: 'DELETE' });
+    const account = await registerAccount(server);
+    const response = await server.fetch('/api/links/never', {
+      method: 'DELETE',
+      headers: authHeaders(account.cookie),
+    });
+
     assert.equal(response.status, 404);
   });
 });

@@ -40,6 +40,14 @@ export type Link = {
   readonly url: string;
   readonly expiresAt: Date | null;
   readonly createdAt: Date;
+  /**
+   * Who owns this link, or `null` for one created without an account.
+   *
+   * Permanently nullable. Anonymous creation is still supported, so new
+   * ownerless rows keep arriving; this is not a transitional state that will
+   * one day be cleaned up.
+   */
+  readonly ownerId: string | null;
 };
 
 /**

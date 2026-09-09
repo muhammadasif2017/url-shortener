@@ -3,6 +3,7 @@ import { after, before, beforeEach, describe, it } from 'node:test';
 
 import { closePool } from '../../src/db/pool.ts';
 import { linkRoutes } from '../../src/modules/links/links.routes.ts';
+import { truncateUsers } from '../helpers/auth.ts';
 import { insertLink, truncateLinks } from '../helpers/db.ts';
 import { startTestServer, type TestServer } from '../helpers/server.ts';
 
@@ -17,6 +18,7 @@ before(async () => {
 });
 
 beforeEach(async () => {
+  await truncateUsers();
   await truncateLinks();
 });
 
@@ -167,10 +169,28 @@ describe('POST /api/links', () => {
   });
 
   it('does not store anything when validation fails', async () => {
-    await createLink({ url: 'javascript:alert(1)' });
+    await createLink({ url: 'javascript:alert(1)', customSlug: 'rejected' });
 
-    const listed = await server.fetch('/api/links');
-    const body = (await listed.json()) as { data: LinkBody[] };
-    assert.equal(body.data.length, 0);
+    // Checked through the read route rather than the listing, because listing
+    // is scoped to an authenticated owner and this request had no session.
+    const read = await server.fetch('/api/links/rejected');
+    assert.equal(read.status, 404);
+  });
+
+  it('rejects a state-changing request that does not declare JSON', async () => {
+    // An HTML form cannot express application/json as an enctype, so this check
+    // is what stops a cross-site form post that carries the session cookie.
+    const response = await server.fetch('/api/links', {
+      method: 'POST',
+      headers: { 'content-type': 'text/plain' },
+      body: JSON.stringify({ url: 'https://example.com' }),
+    });
+
+    assert.equal(response.status, 415);
+  });
+
+  it('creates an anonymous link when no session is sent', async () => {
+    const response = await createLink({ url: 'https://example.com/anon' });
+    assert.equal(response.status, 201);
   });
 });
