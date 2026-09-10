@@ -1,8 +1,9 @@
 import { env } from '../../config/env.ts';
 import { readSessionId, requireJsonContentType } from '../../http/auth.ts';
-import type { RequestContext, RouteResponse, RouteTable } from '../../http/context.ts';
+import type { RouteResponse, RouteTable } from '../../http/context.ts';
 import { json, noContent, redirect } from '../../http/respond.ts';
 import { AppError } from '../../lib/AppError.ts';
+import { audit } from '../../lib/audit.ts';
 import { parseBoundedInteger } from '../../lib/validate.ts';
 import * as analyticsService from '../analytics/analytics.service.ts';
 import * as identityService from '../identity/identity.service.ts';
@@ -77,20 +78,7 @@ function decodeCursor(cursor: string): string {
   return decoded;
 }
 
-/**
- * Resolves the caller's session, allowing none.
- *
- * Used by link creation, which stays open to anonymous callers. A bad or
- * expired cookie is treated as absence rather than as a failure: the request is
- * valid either way, and the only consequence is that the link has no owner.
- *
- * @param context - The request.
- * @returns The user's id, or `undefined`.
- */
-async function optionalUserId(context: RequestContext): Promise<string | undefined> {
-  const user = await identityService.resolveSession(readSessionId(context));
-  return user?.id;
-}
+
 
 /**
  * Every route this module serves.
@@ -131,6 +119,17 @@ export const linkRoutes: RouteTable = [
     method: 'POST',
     path: '/api/links',
     async handle(context): Promise<RouteResponse> {
+      // Creating a link requires a session, so every link has an owner.
+      //
+      // It was open to anonymous callers, and that is the defining abuse of a
+      // URL shortener: anyone could mint a link on this domain pointing anywhere,
+      // with nothing recorded about who did it. A link that borrows this domain's
+      // reputation for a phishing page is the product working as built, and with
+      // no owner there is nobody to suspend and no way to find the rest of what
+      // they made. Requiring a session does not stop abuse, but it makes abuse
+      // attributable, which is the cheapest control that changes anything.
+      const ownerId = await identityService.requireUserId(readSessionId(context));
+
       requireJsonContentType(context);
 
       const parsed = parseCreateLinkInput(context.body, {
@@ -140,7 +139,9 @@ export const linkRoutes: RouteTable = [
 
       if (!parsed.ok) throw AppError.validation(parsed.issues);
 
-      const link = await linkService.createLink(parsed.value, await optionalUserId(context));
+      const link = await linkService.createLink(parsed.value, ownerId);
+      audit('link.created', { userId: ownerId, slug: link.slug, clientIp: context.clientIp });
+
       return json(201, toLinkResponse(link));
     },
   },
@@ -181,7 +182,11 @@ export const linkRoutes: RouteTable = [
     path: '/api/links/:slug',
     async handle(context): Promise<RouteResponse> {
       const userId = await identityService.requireUserId(readSessionId(context));
-      await linkService.deleteLink(context.params['slug'] ?? '', userId);
+      const slug = context.params['slug'] ?? '';
+
+      await linkService.deleteLink(slug, userId);
+      audit('link.deleted', { userId, slug, clientIp: context.clientIp });
+
       return noContent();
     },
   },

@@ -34,7 +34,30 @@ const FINGERPRINT_LENGTH = 8;
  * @returns 64 lowercase hex characters, matching the column's check constraint.
  */
 export function hashClientIp(clientIp: string, salt: string): string {
-  return createHash('sha256').update(salt).update(clientIp).digest('hex');
+  return hashIdentifier(clientIp, salt);
+}
+
+/**
+ * Hashes any identifier that should be countable but not readable.
+ *
+ * The same construction as `hashClientIp`, named for the general case. Two
+ * callers use it: the audit log, which records which client acted without
+ * recording the address, and the per-account login limit, whose bucket key would
+ * otherwise put an email address in a table.
+ *
+ * Salting matters here for the same reason it does for addresses. Email
+ * addresses are enumerable, so an unsalted digest of one is a lookup away from
+ * the address itself.
+ *
+ * @param value - The identifier. Lowercase it first if two spellings of the same
+ *   thing must hash alike.
+ * @param salt - `IP_HASH_SALT`. Rotating it changes every derived value, which
+ *   for a rate-limit bucket means one forgiving window and for the audit log
+ *   means correlation stops at the rotation.
+ * @returns 64 lowercase hex characters.
+ */
+export function hashIdentifier(value: string, salt: string): string {
+  return createHash('sha256').update(salt).update(value).digest('hex');
 }
 
 /**

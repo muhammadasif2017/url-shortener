@@ -1,5 +1,7 @@
 import type { ServerResponse } from 'node:http';
 
+import { env } from '../config/env.ts';
+
 import type { RouteResponse } from './context.ts';
 
 /**
@@ -58,6 +60,28 @@ export function noContent(headers: Readonly<Record<string, string>> = {}): Route
 /** Statuses that must never carry a body, per RFC 9110. */
 const BODYLESS_STATUSES: ReadonlySet<number> = new Set([204, 205, 304]);
 
+/** A year in seconds, the usual HSTS lifetime. */
+const HSTS_MAX_AGE_SECONDS = 31_536_000;
+
+/**
+ * The HSTS header, in production only.
+ *
+ * The header is a promise that this host is reachable over TLS and should never
+ * be tried over plaintext again. That promise is false in development, where the
+ * service runs on plain HTTP, and a browser that has cached it for localhost
+ * will refuse plain HTTP for every other project on that host until the entry is
+ * cleared by hand. Production is also the only environment where a redirect
+ * whose first request went over plaintext is a real exposure.
+ *
+ * @returns The header, or `undefined` outside production.
+ */
+function strictTransportSecurity(): Record<string, string> | undefined {
+  if (!env().isProduction) return undefined;
+  return {
+    'Strict-Transport-Security': `max-age=${HSTS_MAX_AGE_SECONDS}; includeSubDomains`,
+  };
+}
+
 /**
  * Writes a route's response to the socket.
  *
@@ -82,11 +106,30 @@ export function send(
   // response body becomes executable. It costs one header and closes the
   // question.
   //
-  // Nothing else is added here. CSP guards markup this API never returns, and
-  // HSTS is a promise about a domain, so both would be decoration rather than
-  // defence. See the security review in `tasks/todo.md`.
+  // No CSP: it guards markup this API never returns.
   const headers: Record<string, string> = {
     'X-Content-Type-Options': 'nosniff',
+
+    // What the destination of a redirect learns about where the visitor came
+    // from. Under this value it sees the origin and not the path, so the short
+    // link's slug stays private while ordinary attribution still works. The
+    // header is set on every response because the redirect is the one that
+    // matters, and it is the response a route hands back like any other.
+    'Referrer-Policy': 'strict-origin-when-cross-origin',
+
+    // Nothing here is meant to be framed, and the API returns no markup that
+    // would make framing useful. Denying it is free.
+    'X-Frame-Options': 'DENY',
+
+    // No caching by default. Most responses here are either specific to one
+    // session, such as the current user and their links, or a redirect whose
+    // destination may be revoked. A shared cache holding either is a
+    // cross-visitor leak in the first case and an unrevokable link in the
+    // second. A route that wants caching says so in its own headers, which
+    // override this.
+    'Cache-Control': 'no-store',
+
+    ...(strictTransportSecurity() ?? {}),
     ...result.headers,
   };
 

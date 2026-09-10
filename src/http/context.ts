@@ -51,6 +51,15 @@ export type RequestContext = {
    */
   readonly clientIp: string;
   /**
+   * Prefix for any shared rate-limit bucket a handler writes.
+   *
+   * Shared counters live in a table, so two servers using one key count each
+   * other's requests. Empty in production, where that is exactly the point, and
+   * unique per server in tests, where it is not: without it every test server
+   * would share one counter and later tests would start pre-limited.
+   */
+  readonly rateLimitNamespace: string;
+  /**
    * Parsed JSON request body, or `undefined` for a request that carries none.
    * Untrusted and of unknown shape: every handler validates before use.
    */

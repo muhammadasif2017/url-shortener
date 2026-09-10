@@ -6,7 +6,7 @@ import { analyticsRoutes } from '../../src/modules/analytics/analytics.routes.ts
 import { identityRoutes } from '../../src/modules/identity/identity.routes.ts';
 import { linkRoutes } from '../../src/modules/links/links.routes.ts';
 import { insertLink, truncateLinks } from '../helpers/db.ts';
-import { truncateUsers } from '../helpers/auth.ts';
+import { registerAccount, truncateUsers } from '../helpers/auth.ts';
 import { startTestServer, type TestServer } from '../helpers/server.ts';
 
 /**
@@ -75,9 +75,10 @@ describe('response splitting', () => {
     // never contain them. Incidental protections are exactly the ones worth a
     // regression test, because nothing in this repository would remind a future
     // reader that the parser is what is holding the line.
+    const account = await registerAccount(server);
     const created = await server.fetch('/api/links', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', cookie: account.cookie },
       body: JSON.stringify({ url: 'https://example.com/a\r\nX-Injected: yes' }),
     });
 

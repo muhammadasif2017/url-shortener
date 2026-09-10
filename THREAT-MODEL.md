@@ -6,8 +6,9 @@ names the file and the line of code that produces it.
 
 The purpose of this document is to record where untrusted data enters the system, what an
 attacker would want from it, and which of those paths are currently unguarded. It is a
-design artifact first. Three of its findings have since been fixed in the code, and each
-is marked where it appears.
+design artifact first. Ten of its twelve findings have since been fixed, and each is marked
+where it appears. Two remain open by decision, not by oversight: findings 9 and 12, both of
+which trade a small disclosure against the public API contract.
 
 ## 1. Trust boundaries
 
@@ -82,9 +83,14 @@ first on a real deployment.
 
 ### Repudiation
 
-There is no audit log of security-relevant events. Successful and failed logins, session
-creation, and link deletion leave no record. After an account compromise there is nothing
-to reconstruct what happened. `src/lib/logger.ts` is used for errors only.
+There was no audit log of security-relevant events. Successful and failed sign-ins, session
+creation, and link deletion left no record, so after an account compromise there was
+nothing to reconstruct.
+
+**Fixed.** `src/lib/audit.ts` records registration, sign-in success and failure, throttling,
+sign-out, link creation and link deletion. The client address is hashed with the same salt
+the analytics tables use, which keeps two events from one client visibly related without
+making the log the one place raw addresses are kept.
 
 ### Information disclosure
 
@@ -98,22 +104,29 @@ different error paths.
 holding a slug can read that link's destination, expiry and creation time. Since the
 redirect already discloses the destination, the marginal leak is the metadata.
 
-Session identifiers are stored in the database exactly as they appear in the cookie. Read
-access to the `sessions` table, through a backup, a log, a replica or an injection in some
-future query, is immediate account takeover for every live session. Storing a hash of the
-identifier and looking sessions up by that hash would remove the table as a credential
-store.
+Session identifiers were stored exactly as they appear in the cookie. Read access to the
+`sessions` table, through a backup, a log, a replica or an injection in some future query,
+was immediate account takeover for every live session.
+
+**Fixed.** The table holds a SHA-256 digest and lookups hash before comparing, so the row
+is no longer a credential. Unsalted and unstretched is correct here and is the opposite of
+the password decision: the input is 32 bytes of CSPRNG output, so there is no guessable
+candidate for a work factor to slow and no enumerable space for a salt to defend.
 
 Error responses are generic and stack traces never reach the client
 (`src/http/errorHandler.ts`).
 
 ### Denial of service
 
-The rate limiter in `src/http/rateLimit.ts` keeps its counters in a process-local `Map`.
-Behind more than one instance the effective limit is the configured maximum multiplied by
-the instance count, and the ten-attempt credential limit that the login route depends on
-becomes ten per instance. This is the single most consequential gap in the current
-controls, because it silently weakens a control that appears to be present.
+The rate limiter in `src/http/rateLimit.ts` kept its counters in a process-local `Map`.
+Behind more than one instance the effective limit was the configured maximum multiplied by
+the instance count, and the ten-attempt credential limit the login route depends on became
+ten per instance. A control that silently scales with the deployment is worse than none,
+because the code still reads as though it is there.
+
+**Fixed.** API limits count in `rate_limit_windows`, shared by every instance. The
+in-process limiter now serves the redirect path only, where per-instance counting is the
+right trade and is argued in `isSharedRateLimited`.
 
 The same limiter could also be made to forget a victim on demand. When a key was new or
 its window had expired, `check` swept expired entries and then, if the map was still at
@@ -141,19 +154,26 @@ thousand. What removes the class rather than raising its price is the shared cou
 in finding 2, which remains open. Two regression tests in `tests/unit/rateLimit.test.ts`
 cover both eviction paths.
 
-`isRateLimited` in `src/server.ts` applies the limiter only to paths beginning with
-`/api/`. The redirect route is therefore unmetered, and each redirect issues an
-unawaited insert into `click_events`. An attacker with one valid slug can drive unbounded
-write volume against the database from a single host. The write tracker in
-`analytics.writes.ts` sheds above ten thousand pending writes, which protects process
-memory but not the database.
+The redirect route was unmetered, and each redirect issues an unawaited insert into
+`click_events`. An attacker with one valid slug could drive unbounded write volume at the
+database from a single host. The write tracker in `analytics.writes.ts` sheds above ten
+thousand pending writes, which protects process memory but not the database.
+
+**Fixed.** Six hundred redirects per minute per address, which is far above anything a
+person following links produces and far below what a write flood needs.
 
 Body size is capped at 16 KB and the server sets `headersTimeout`, `requestTimeout` and
 `keepAliveTimeout`, so slow-header and oversized-body attacks are covered.
 
-Password brute force is limited per address only. Ten attempts per fifteen minutes from
-each of a thousand hosts is ten thousand attempts against one account, and nothing counts
-attempts per account or locks one out.
+Password brute force was limited per address only. Ten attempts per fifteen minutes from
+each of a thousand hosts is ten thousand attempts against one account, and nothing counted
+attempts per account or locked one out.
+
+**Fixed.** Twenty failed sign-ins per account per hour, in the shared counter so the budget
+is the account's and not one instance's. Only failures count, and only after verification
+has actually failed, so a working password never spends the budget. That ordering is the
+design: a bucket that counted every attempt would let anyone who knows an address lock its
+owner out, turning the control into the attack.
 
 ### Elevation of privilege
 
@@ -161,19 +181,26 @@ Authorization is checked where it matters. `deleteLink` compares `link.ownerId` 
 session user, and both analytics routes go through `requireOwnedLink`. Link listing is
 scoped to the owner in SQL.
 
-`POST /api/links` accepts anonymous callers by design: `optionalUserId` returns undefined
-when no session is present and the link is stored with a null owner. That is not privilege
-escalation, but it is the abuse case in section 4.
+`POST /api/links` accepted anonymous callers, storing the link with a null owner. That was
+never privilege escalation, but it was the abuse case in section 4.
+
+**Fixed.** Creating a link requires a session. Following one never will: a redirect that
+demanded a session would be useless to everyone the link was sent to.
 
 ## 4. Abuse cases
 
 Three, in the order an attacker would reach for them.
 
-**Phishing laundering.** Anyone, unauthenticated, can mint a link on this domain pointing
-at any http or https destination. There is no reputation check, no destination denylist,
-and no owner to hold responsible. This is the defining abuse of a URL shortener, and the
-service currently has no answer to it beyond a general per-address rate limit. Requiring a
-session to create a link makes abuse attributable and is the cheapest available control.
+**Phishing laundering.** Anyone, unauthenticated, could mint a link on this domain pointing
+at any http or https destination, with no reputation check, no destination denylist, and no
+owner to hold responsible. This is the defining abuse of a URL shortener.
+
+**Partly fixed.** Creating a link now requires a session, so every link has an owner and
+abuse is attributable: an account can be suspended and everything it made can be found.
+Attribution is not prevention. There is still no reputation check on destinations, and
+registration is open, so the cost of an attributable identity is one email address. A
+denylist or a reputation feed is the next control, and it is a larger piece of work than
+anything in this pass.
 
 **Redirect header smuggling.** `parseDestinationUrl` in `src/lib/validate.ts` validated a
 parsed `URL` and then returned the caller's original string rather than `parsed.href`. The
@@ -188,7 +215,7 @@ applied to that serialization as well, since normalization can lengthen a URL pa
 column constraint. The visible change is that `http://example.com` is stored as
 `http://example.com/`.
 
-**Visitor de-anonymization.** `ip_hash` is a single unsalted-per-row SHA-256 over the
+**Visitor de-anonymization.** (Bounded by retention, not removed.) `ip_hash` is a single unsalted-per-row SHA-256 over the
 global salt and the address. SHA-256 is fast, and the IPv4 space is small, so anyone who
 obtains both the salt and the table recovers every visitor's raw address. The salt is
 correctly required to be at least 32 characters and is never logged, but the two assets
@@ -200,17 +227,17 @@ database, and rotating it on a schedule, is what limits the damage.
 | # | Severity | Finding | Location |
 |---|---|---|---|
 | 1 | High | ~~Database TLS does not verify the server certificate~~ **Fixed.** `rejectUnauthorized` is now true, with the provider bundle read from `DATABASE_CA_CERT` | `src/db/pool.ts` |
-| 2 | High | Rate limiter is process-local, so limits multiply by instance count | `src/http/rateLimit.ts` |
-| 2b | High | ~~Limiter evicts by insertion order, so a flood clears a victim's credential window~~ **Mitigated.** Keys at the limit are protected, and the cost of clearing one rises from one request to `max`. Not closed: see finding 2 | `src/http/rateLimit.ts` |
-| 3 | High | Anonymous link creation with no destination reputation control | `src/modules/links/links.routes.ts` |
-| 4 | Medium | Redirect route is unmetered and writes to the database per request | `src/server.ts` |
-| 5 | Medium | Session identifiers stored in plaintext in the database | `src/modules/identity/identity.repository.ts` |
+| 2 | High | ~~Rate limiter is process-local, so limits multiply by instance count~~ **Fixed.** API counters live in `rate_limit_windows` and are shared by every instance | `src/http/sharedRateLimit.ts` |
+| 2b | High | ~~Limiter evicts by insertion order, so a flood clears a victim's credential window~~ **Fixed.** Keys at the limit are protected, and the credential paths no longer use this limiter at all | `src/http/rateLimit.ts` |
+| 3 | High | ~~Anonymous link creation with no destination reputation control~~ **Fixed.** Creating a link requires a session, so every link has an owner | `src/modules/links/links.routes.ts` |
+| 4 | Medium | ~~Redirect route is unmetered and writes to the database per request~~ **Fixed.** 600 redirects per minute per address, counted in process | `src/server.ts` |
+| 5 | Medium | ~~Session identifiers stored in plaintext in the database~~ **Fixed.** The table holds a SHA-256 digest; the identifier exists only in the cookie | `src/lib/sessionId.ts` |
 | 6 | Medium | ~~Destination URL is persisted unnormalized, from the raw input string~~ **Fixed.** `parseDestinationUrl` returns `parsed.href`, and the length cap is applied to it | `src/lib/validate.ts` |
-| 7 | Medium | No per-account throttle or lockout, only per-address | `src/server.ts` |
-| 8 | Medium | Click history has no retention limit and no deletion path | `migrations/004_create_click_events.sql` |
+| 7 | Medium | ~~No per-account throttle or lockout, only per-address~~ **Fixed.** 20 failed sign-ins per account per hour, counting failures only | `src/modules/identity/identity.routes.ts` |
+| 8 | Medium | ~~Click history has no retention limit and no deletion path~~ **Fixed.** `CLICK_RETENTION_DAYS`, swept daily, default 90 | `src/modules/analytics/analytics.retention.ts` |
 | 9 | Low | Registration discloses whether an address is already registered | `src/modules/identity/identity.routes.ts` |
-| 10 | Low | No HSTS or `Referrer-Policy`, and no cache directive on authenticated JSON | `src/http/respond.ts` |
-| 11 | Low | No audit log for authentication or deletion events | `src/lib/logger.ts` |
+| 10 | Low | ~~No HSTS or `Referrer-Policy`, and no cache directive on authenticated JSON~~ **Fixed.** All three, plus `X-Frame-Options`; HSTS in production only | `src/http/respond.ts` |
+| 11 | Low | ~~No audit log for authentication or deletion events~~ **Fixed.** Registration, sign-in, sign-out, throttling, link creation and deletion | `src/lib/audit.ts` |
 | 12 | Low | `GET /api/links/:slug` exposes link metadata without a session | `src/modules/links/links.routes.ts` |
 
 ## 6. What is already right
@@ -235,32 +262,51 @@ Recorded so that a later change does not undo it by accident.
 Click events are personal data. `ip_hash` is a pseudonym rather than an anonymization,
 because it reverses given the salt, and `referrer` records pages the visitor came from.
 
-Three things are missing and all three are schema and code, not policy:
+Retention now bounds all of it. `CLICK_RETENTION_DAYS` defaults to ninety days and a daily
+sweep deletes past it, batched so one pass never holds a long transaction. That expiry is
+also the erasure mechanism, and it has to be: nothing in a click row identifies a person
+well enough for them to ask for their own rows, so there is no request to honour and the
+only honest answer is a short life for every row.
 
-- No retention limit. Rows accumulate for the life of the deployment.
-- No deletion path for a visitor. Deleting a link cascades its clicks away, which is the
-  link owner's erasure story, not the visitor's.
-- No stated collection purpose recorded anywhere outside the migration comment.
+What remains is a documentation gap rather than a code one. The collection purpose is
+stated in the migration comment and in `.env.example`, and nowhere a visitor would look.
+A deployment serving people in a jurisdiction with disclosure requirements needs that
+written where they can read it.
 
-## 8. Suggested order of work
+## 8. What was done, and what was left
 
-Findings 1, 2b and 6 are done, and are struck through in the table above. What
-follows is what remains, with the completed steps kept in place so the ordering
-still reads as one sequence.
+Ten findings are fixed. The work landed in two passes, and the table above marks each one.
 
+The first pass took the three that were unambiguous: certificate verification on the
+database connection, the limiter's eviction order, and storing the parser's serialization
+of a destination URL rather than the caller's string.
 
-1. ~~Verify the database certificate (finding 1).~~ Done. The flag alone was not enough:
-   most managed PostgreSQL providers use a chain outside Node's default trust store, so
-   `DATABASE_CA_CERT` carries their published bundle. A deployment that turns TLS on
-   without supplying it now fails to connect rather than connecting unverified, which is
-   the intended direction but is a deployment step someone has to take.
-2. ~~Fix the eviction order in the limiter (finding 2b).~~ Done, and it raises the price of
-   the attack rather than ending it. Still outstanding, and now carrying the rest of that
-   exposure: move the counters to a shared store, or state single-instance deployment
-   explicitly in the README (finding 2).
-3. ~~Return `parsed.href` from `parseDestinationUrl` (finding 6).~~ Done.
-4. Decide on anonymous link creation (finding 3). This is a product decision, not a
-   patch.
-5. Meter the redirect path (finding 4).
-6. Hash session identifiers at rest (finding 5).
-7. Retention job and response headers (findings 8 and 10).
+The second pass took the rest, including the two that were product decisions rather than
+patches:
+
+- **Shared counters (finding 2).** API rate limits moved into `rate_limit_windows`, counted
+  by an upsert that rolls the window over in one statement. One round trip per limited
+  request, paid on the API paths only.
+- **The redirect path (finding 4)** keeps an in-process limiter, at 600 per minute per
+  address, and the split is deliberate. What that limit protects is the database from
+  click-write amplification, and paying a synchronous round trip to that same database in
+  order to protect it would be self-defeating. A per-instance cap still bounds the total.
+- **Link creation requires a session (finding 3).** Every link now has an owner, so abuse
+  is attributable. This is the change that alters the public API: an anonymous `POST
+  /api/links` is a 401.
+- **Session identifiers are hashed at rest (finding 5).** Unsalted SHA-256, because the
+  input is already 256 bits of randomness and there is nothing for a salt or a work factor
+  to defend. The migration deletes every live session, so a deploy signs everyone out once.
+- **Per-account sign-in throttle (finding 7).** Twenty failures per account per hour,
+  counting failures only. Counting attempts would have handed anyone who knows an address
+  a way to lock its owner out.
+- **Retention (finding 8), headers (finding 10), audit log (finding 11).**
+
+Two findings are open on purpose. Finding 9, where registration discloses that an address
+is taken, and finding 12, where link metadata is readable without a session. Both are small
+disclosures, and both would change the public API contract to close.
+
+One residual is worth stating rather than filing: the audit log records a hashed client
+address and an account id, and it is the same stream as every other log line. That is
+enough to reconstruct an incident and not enough to satisfy an auditor who expects an
+append-only trail with its own retention.

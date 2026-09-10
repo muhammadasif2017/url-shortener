@@ -129,11 +129,38 @@ describe('link administration requires authentication', () => {
     assert.equal(body.error.code, 'UNAUTHENTICATED');
   });
 
-  it('still allows anonymous link creation and redirection', async () => {
-    // Authentication gates administration, not the product.
-    const created = await fetch(`${child.url}/api/links`, {
+  it('requires a session to create a link, and none to follow one', async () => {
+    // Authentication gates who can mint a link, never who can follow one.
+    // Following is the product, and a redirect that asked for a session would be
+    // useless to everyone the link was sent to.
+    const anonymous = await fetch(`${child.url}/api/links`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ url: 'https://example.com/anonymous' }),
+    });
+
+    assert.equal(anonymous.status, 401);
+    await anonymous.body?.cancel();
+
+    const registered = await fetch(`${child.url}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        email: `process-${Date.now()}@example.com`,
+        password: 'a sufficiently long passphrase',
+      }),
+    });
+
+    assert.equal(registered.status, 201);
+    const setCookie = registered.headers
+      .getSetCookie()
+      .find((header) => header.startsWith('session='));
+    const cookie = (setCookie ?? '').split(';')[0] ?? '';
+    await registered.body?.cancel();
+
+    const created = await fetch(`${child.url}/api/links`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie },
       body: JSON.stringify({ url: 'https://example.com/anonymous' }),
     });
 

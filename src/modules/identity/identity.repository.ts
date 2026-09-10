@@ -1,6 +1,7 @@
 import type pg from 'pg';
 
 import { pool } from '../../db/pool.ts';
+import { hashSessionId } from '../../lib/sessionId.ts';
 import type { Session, User, UserWithHash } from './identity.schema.ts';
 
 /** SQL for users and sessions, and nothing else. */
@@ -92,7 +93,7 @@ export async function findUserByEmail(email: string): Promise<UserWithHash | und
  * @returns The stored session.
  */
 export async function insertSession(
-  id: string,
+  sessionId: string,
   userId: string,
   ttlSeconds: number,
 ): Promise<Session> {
@@ -103,12 +104,16 @@ export async function insertSession(
     `insert into sessions (id, user_id, expires_at)
      values ($1, $2, now() + make_interval(secs => $3))
      returning id, user_id, expires_at`,
-    [id, userId, ttlSeconds],
+    [hashSessionId(sessionId), userId, ttlSeconds],
   );
 
   const row = result.rows[0];
   if (row === undefined) throw new Error('Session insert returned no row.');
-  return { id: row.id, userId: row.user_id, expiresAt: row.expires_at };
+
+  // The identifier travels back out, not the hash the row holds. The caller puts
+  // this value in the cookie, and it is the only copy of it that will ever
+  // exist: nothing else in the process keeps it and nothing writes it down.
+  return { id: sessionId, userId: row.user_id, expiresAt: row.expires_at };
 }
 
 /**
@@ -127,7 +132,7 @@ export async function findUserBySession(sessionId: string): Promise<User | undef
      from sessions s
      join users u on u.id = s.user_id
      where s.id = $1 and s.expires_at > now()`,
-    [sessionId],
+    [hashSessionId(sessionId)],
   );
 
   const row = result.rows[0];
@@ -140,7 +145,7 @@ export async function findUserBySession(sessionId: string): Promise<User | undef
  * @param sessionId - The session to end.
  */
 export async function deleteSession(sessionId: string): Promise<void> {
-  await pool().query('delete from sessions where id = $1', [sessionId]);
+  await pool().query('delete from sessions where id = $1', [hashSessionId(sessionId)]);
 }
 
 /**

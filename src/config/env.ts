@@ -58,6 +58,16 @@ export type Env = {
   readonly trustProxyHops: number;
   /** Salt for hashing visitor IP addresses. Never logged. */
   readonly ipHashSalt: string;
+  /**
+   * How long click events are kept, in days.
+   *
+   * Retention is the deletion path for visitor data. A click row is a hashed
+   * address, a referrer and a user agent, with nothing that identifies the
+   * person it came from, so there is no request a visitor could make to have
+   * their own rows found and removed. An expiry is what bounds that: data the
+   * service no longer holds cannot be leaked, subpoenaed, or correlated later.
+   */
+  readonly clickRetentionDays: number;
   readonly rateLimitMax: number;
   readonly rateLimitWindowMs: number;
   readonly sessionTtlSeconds: number;
@@ -168,6 +178,12 @@ export function loadEnv(source: Source): Env {
     max: 10,
   });
 
+  const clickRetentionDays = requireInteger(source, 'CLICK_RETENTION_DAYS', issues, {
+    min: 1,
+    max: 3_650,
+    fallback: 90,
+  });
+
   const rateLimitMax = requireInteger(source, 'RATE_LIMIT_MAX', issues, {
     min: 1,
     max: 1_000_000,
@@ -248,6 +264,7 @@ export function loadEnv(source: Source): Env {
     databaseCaCert,
     trustProxyHops,
     ipHashSalt,
+    clickRetentionDays,
     rateLimitMax,
     rateLimitWindowMs,
     sessionTtlSeconds,

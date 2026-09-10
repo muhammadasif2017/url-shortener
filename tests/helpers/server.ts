@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 
 import type { RouteTable } from '../../src/http/context.ts';
@@ -47,7 +48,20 @@ export async function startTestServer(
   routes: RouteTable = [],
   options: ServerOptions = {},
 ): Promise<TestServer> {
-  const server = createAppServer(routes, options);
+  // Shared rate-limit counters live in the database, keyed by client address,
+  // and every test server binds to loopback. Without a namespace per server the
+  // suite would count as one client and later tests would start pre-limited.
+  // Limits are effectively off unless a test asks for them. Every test server
+  // shares one client address, and several files register an account per test,
+  // so the production credential limit of ten per fifteen minutes would fail
+  // whichever test happened to run eleventh. A test that is about limiting
+  // passes its own numbers.
+  const server = createAppServer(routes, {
+    rateLimitNamespace: `test-${randomUUID()}:`,
+    rateLimit: { max: 100_000, windowMs: 60_000 },
+    authRateLimit: { max: 100_000, windowMs: 60_000 },
+    ...options,
+  });
 
   await new Promise<void>((resolve) => {
     server.listen(0, '127.0.0.1', resolve);

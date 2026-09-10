@@ -87,6 +87,36 @@ export async function insertClick(event: NewClickEvent): Promise<void> {
 }
 
 /** Raw counts, as `pg` returns them: `bigint` arrives as a string. */
+/**
+ * Deletes click events older than the retention window.
+ *
+ * The subquery picks the batch by primary key and the delete removes exactly
+ * those rows, which keeps each statement short and its lock footprint small.
+ * `occurred_at` has no index of its own, deliberately: indexing it would cost a
+ * write on every click to serve a query that runs once a day, and the existing
+ * index on `(link_id, occurred_at)` already covers every read path.
+ *
+ * @param retentionDays - How long a click is kept.
+ * @param batchSize - Most rows to delete in this statement.
+ * @returns How many rows were deleted.
+ */
+export async function deleteClicksOlderThan(
+  retentionDays: number,
+  batchSize: number,
+): Promise<number> {
+  const result = await pool().query(
+    `delete from click_events
+     where id in (
+       select id from click_events
+       where occurred_at < now() - make_interval(days => $1::int)
+       limit $2
+     )`,
+    [retentionDays, batchSize],
+  );
+
+  return result.rowCount ?? 0;
+}
+
 type TotalsRow = {
   readonly total: string;
   readonly unique_visitors: string;

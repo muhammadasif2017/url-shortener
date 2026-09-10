@@ -215,11 +215,16 @@ removed rather than left as a switch that could be turned back on.
 ## Status
 
 All five phases are complete: foundation, links, hardening, identity, and
-analytics. 315 tests pass and `npm run typecheck` is clean.
+analytics. 327 tests pass and `npm run typecheck` is clean.
 
 A threat model of the running service is in
-[`THREAT-MODEL.md`](THREAT-MODEL.md), with the findings it produced ranked and
-the three already fixed marked as such.
+[`THREAT-MODEL.md`](THREAT-MODEL.md). Ten of its twelve findings are fixed; the
+two left open are recorded there with the reason.
+
+Two of those fixes change behaviour a deployment has to know about. Creating a
+link now requires a session, so an anonymous `POST /api/links` is a 401. And the
+migration that hashes session identifiers deletes every existing session, so the
+deploy that applies it signs every user out once.
 
 The service is **not deployed**, deliberately. Criterion 19 in `SPEC.md` is the
 only one that requires a public URL, and running locally is enough for what this

@@ -5,11 +5,79 @@ import {
   sessionCookie,
   unauthenticated,
 } from '../../http/auth.ts';
-import type { RouteResponse, RouteTable } from '../../http/context.ts';
+import type { RequestContext, RouteResponse, RouteTable } from '../../http/context.ts';
 import { json, noContent } from '../../http/respond.ts';
+import { checkSharedLimit, peekSharedLimit } from '../../http/sharedRateLimit.ts';
+import { env } from '../../config/env.ts';
 import { AppError } from '../../lib/AppError.ts';
+import { audit } from '../../lib/audit.ts';
+import { hashIdentifier } from '../../lib/ipHash.ts';
 import * as identityService from './identity.service.ts';
 import { parseCredentials, type User } from './identity.schema.ts';
+
+/**
+ * Failed sign-ins permitted per account, per window.
+ *
+ * Separate from the per-address limit, which counts requests from one client.
+ * That limit does nothing about the attack it looks like it covers: ten attempts
+ * per address from a thousand addresses is ten thousand attempts at one account,
+ * and credential stuffing is run exactly that way.
+ */
+export const ACCOUNT_FAILURE_MAX = 20;
+
+/** Window for the per-account limit: one hour. */
+const ACCOUNT_FAILURE_WINDOW_MS = 60 * 60 * 1000;
+
+/** Limit and window for the per-account bucket. */
+const ACCOUNT_FAILURE_LIMIT = {
+  max: ACCOUNT_FAILURE_MAX,
+  windowMs: ACCOUNT_FAILURE_WINDOW_MS,
+};
+
+/**
+ * The bucket counting failed sign-ins for one account.
+ *
+ * The address is hashed, so the counter table holds no email addresses. Missing
+ * accounts get a bucket too, since skipping it would make the limiter's own
+ * behaviour disclose which addresses are registered.
+ *
+ * @param email - The normalised address from the request.
+ * @param context - The request, which carries the namespace these counters live
+ *   under. Empty in production; per-server in tests.
+ * @returns The bucket key.
+ */
+function accountFailureBucket(email: string, context: RequestContext): string {
+  return `${context.rateLimitNamespace}login-failure:${hashIdentifier(email, env().ipHashSalt)}`;
+}
+
+/**
+ * Refuses a sign-in when the account has already failed too many times.
+ *
+ * This reads the bucket rather than counting against it, and the difference is
+ * the whole design. A bucket that counts every attempt is a lockout weapon:
+ * anyone who knows an address could spend the account's allowance and keep its
+ * owner out. Only failures are counted, and only once verification has actually
+ * failed, so a legitimate sign-in never consumes anything.
+ *
+ * @param email - The normalised address from the request.
+ * @param context - The request, for the audit line.
+ * @throws {AppError} 429 when the account's failure budget is spent.
+ */
+async function requireAccountAttemptsRemaining(
+  email: string,
+  context: RequestContext,
+): Promise<void> {
+  const decision = await peekSharedLimit(
+    accountFailureBucket(email, context),
+    ACCOUNT_FAILURE_LIMIT,
+  );
+  if (decision.allowed) return;
+
+  audit('auth.login.throttled', { clientIp: context.clientIp });
+  throw new AppError('RATE_LIMITED', 'Too many failed sign-in attempts.', 429, {
+    headers: { 'Retry-After': String(decision.retryAfterSeconds) },
+  });
+}
 
 /** HTTP surface for accounts and sessions. */
 
@@ -42,6 +110,7 @@ export const identityRoutes: RouteTable = [
       if (!parsed.ok) throw AppError.validation(parsed.issues);
 
       const { user, session } = await identityService.register(parsed.value);
+      audit('auth.register', { userId: user.id, clientIp: context.clientIp });
 
       return json(201, toUserResponse(user), {
         'Set-Cookie': sessionCookie(session.id),
@@ -64,7 +133,27 @@ export const identityRoutes: RouteTable = [
         throw new AppError('INVALID_CREDENTIALS', 'Email or password is incorrect.', 401);
       }
 
-      const { user, session } = await identityService.login(parsed.value);
+      await requireAccountAttemptsRemaining(parsed.value.email, context);
+
+      let user;
+      let session;
+      try {
+        ({ user, session } = await identityService.login(parsed.value));
+      } catch (error) {
+        // Only a rejected credential counts. A malformed request or a database
+        // failure is not evidence of guessing, and counting either would let
+        // noise lock an account out.
+        if (error instanceof AppError && error.code === 'INVALID_CREDENTIALS') {
+          await checkSharedLimit(
+            accountFailureBucket(parsed.value.email, context),
+            ACCOUNT_FAILURE_LIMIT,
+          );
+          audit('auth.login.failed', { clientIp: context.clientIp });
+        }
+        throw error;
+      }
+
+      audit('auth.login.succeeded', { userId: user.id, clientIp: context.clientIp });
 
       return json(200, toUserResponse(user), {
         'Set-Cookie': sessionCookie(session.id),
@@ -78,7 +167,16 @@ export const identityRoutes: RouteTable = [
       // No content-type requirement and no session requirement. Logging out is
       // not a state change an attacker benefits from forcing, and answering 401
       // to someone whose session already expired would be unhelpful.
-      await identityService.logout(readSessionId(context));
+      const sessionId = readSessionId(context);
+
+      // Read the account before the row is deleted, so the audit line can say
+      // whose session ended. Afterwards there is nothing left to ask.
+      const user = await identityService.resolveSession(sessionId);
+      await identityService.logout(sessionId);
+
+      if (user !== undefined) {
+        audit('auth.logout', { userId: user.id, clientIp: context.clientIp });
+      }
 
       return noContent({ 'Set-Cookie': clearSessionCookie() });
     },
