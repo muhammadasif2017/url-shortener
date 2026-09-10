@@ -10,69 +10,105 @@
 # already has; a change that lands in two of them is labelled twice, which is
 # itself worth seeing.
 #
-# actions/labeler@v4 syntax: a label maps to a list of glob patterns, and any
-# match applies the label.
+# Written in the v5 schema, which is what v5 and later require. v4 took a bare
+# list of globs under each label. v5 redesigned this into a list of match
+# objects so that branch names and file paths can be combined, and the release
+# notes state plainly that the two are not compatible. A v4 file under a v5
+# action does not warn; it matches nothing.
+#
+# `any-glob-to-any-file` is the rule used throughout: one matching file is
+# enough to apply the label. That is the right question for every label here,
+# because these say "this change touches X", not "this change is only X".
+#
+# One trap worth knowing when changing this file: the Labeler workflow runs on
+# `pull_request_target`, so the action and this configuration are both read from
+# the base branch. A pull request that edits this file is therefore not testing
+# its own version of it. It takes effect once merged.
 
 links:
-  - src/modules/links/**
-  - tests/**/links.test.ts
-  - tests/**/redirect.test.ts
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'src/modules/links/**'
+          - 'tests/**/links.test.ts'
+          - 'tests/**/redirect.test.ts'
 
 identity:
-  - src/modules/identity/**
-  - tests/**/identity.test.ts
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'src/modules/identity/**'
+          - 'tests/**/identity.test.ts'
 
 analytics:
-  - src/modules/analytics/**
-  - tests/**/analytics.test.ts
-  - tests/**/stats.test.ts
-  - tests/**/referrers.test.ts
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'src/modules/analytics/**'
+          - 'tests/**/analytics.test.ts'
+          - 'tests/**/stats.test.ts'
+          - 'tests/**/referrers.test.ts'
 
 http:
-  - src/http/**
-  - src/server.ts
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'src/http/**'
+          - 'src/server.ts'
 
 # Anything that changes the stored shape. A migration is the one kind of change
 # this project can never edit after it ships, so it is worth flagging on sight.
 database:
-  - migrations/**
-  - src/db/**
-  - scripts/migrate.ts
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'migrations/**'
+          - 'src/db/**'
+          - 'scripts/migrate.ts'
 
 security:
-  - THREAT-MODEL.md
-  - src/lib/password.ts
-  - src/lib/sessionId.ts
-  - src/lib/ipHash.ts
-  - src/http/auth.ts
-  - src/http/cookies.ts
-  - src/http/rateLimit.ts
-  - src/http/sharedRateLimit.ts
-  - tests/**/security.test.ts
-  - tests/**/hardening.test.ts
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'THREAT-MODEL.md'
+          - 'SECURITY.md'
+          - 'src/lib/password.ts'
+          - 'src/lib/sessionId.ts'
+          - 'src/lib/ipHash.ts'
+          - 'src/http/auth.ts'
+          - 'src/http/cookies.ts'
+          - 'src/http/rateLimit.ts'
+          - 'src/http/sharedRateLimit.ts'
+          - 'tests/**/security.test.ts'
+          - 'tests/**/hardening.test.ts'
 
 documentation:
-  - '**/*.md'
-  - openapi.json
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/*.md'
+          - 'openapi.json'
 
 # A change to a decision record deserves its own label. Superseding one is the
 # most consequential documentation change this repository has.
 adr:
-  - docs/adr/**
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'docs/adr/**'
 
 # Changes to how the project is built, checked, or shipped rather than to what
 # it does.
 tooling:
-  - .github/**
-  - Dockerfile
-  - docker-compose.yml
-  - docker/**
-  - eslint.config.js
-  - .prettierrc.json
-  - .prettierignore
-  - package.json
-  - package-lock.json
-  - tsconfig.json
+  - changed-files:
+      - any-glob-to-any-file:
+          - '.github/**'
+          - 'Dockerfile'
+          - 'docker-compose.yml'
+          - 'docker-compose.multi.yml'
+          - 'docker/**'
+          - 'nginx/**'
+          - 'eslint.config.js'
+          - '.prettierrc.json'
+          - '.prettierignore'
+          - 'package.json'
+          - 'package-lock.json'
+          - 'tsconfig.json'
 
 tests:
-  - tests/**
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'tests/**'
+          - 'scripts/experiments/**'
