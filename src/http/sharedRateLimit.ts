@@ -89,52 +89,6 @@ export async function checkSharedLimit(
 }
 
 /**
- * Reads a bucket without counting against it.
- *
- * The check before a failure is counted has to be a read, or the check itself
- * becomes the attempt it is trying to measure.
- *
- * @param bucket - Purpose prefix and identity.
- * @param options - Limit and window.
- * @returns The decision implied by the current count, or an allowing decision
- *   when the bucket is absent or expired.
- * @throws Whatever the database throws.
- */
-export async function peekSharedLimit(
-  bucket: string,
-  options: SharedRateLimitOptions,
-): Promise<RateLimitDecision> {
-  const result = await pool().query<{ count: number; retry_after_seconds: number }>(
-    `select count,
-            greatest(1, ceil(extract(epoch from expires_at - now())))::int
-              as retry_after_seconds
-     from rate_limit_windows
-     where bucket = $1 and expires_at > now()`,
-    [bucket],
-  );
-
-  const row = result.rows[0];
-  if (row === undefined) {
-    return {
-      allowed: true,
-      remaining: options.max,
-      retryAfterSeconds: Math.ceil(options.windowMs / 1000),
-    };
-  }
-
-  // Strictly less than, where `checkSharedLimit` uses less than or equal. The
-  // difference is what each count means. There, the current request has already
-  // been counted, so spending the last of the budget is still allowed. Here the
-  // count is of events that have already happened, and a budget already spent
-  // means the next thing must be refused.
-  return {
-    allowed: row.count < options.max,
-    remaining: Math.max(0, options.max - row.count),
-    retryAfterSeconds: row.retry_after_seconds,
-  };
-}
-
-/**
  * Deletes rows whose window has passed.
  *
  * Never awaited by a request. A failed sweep leaves dead rows, which the upsert

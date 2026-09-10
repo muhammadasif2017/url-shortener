@@ -7,7 +7,8 @@ import {
 } from '../../http/auth.ts';
 import type { RequestContext, RouteResponse, RouteTable } from '../../http/context.ts';
 import { json, noContent } from '../../http/respond.ts';
-import { checkSharedLimit, peekSharedLimit } from '../../http/sharedRateLimit.ts';
+import type { RateLimitDecision } from '../../http/rateLimit.ts';
+import { checkSharedLimit } from '../../http/sharedRateLimit.ts';
 import { env } from '../../config/env.ts';
 import { AppError } from '../../lib/AppError.ts';
 import { audit } from '../../lib/audit.ts';
@@ -51,26 +52,45 @@ function accountFailureBucket(email: string, context: RequestContext): string {
 }
 
 /**
- * Refuses a sign-in when the account has already failed too many times.
+ * Counts one failed sign-in and reports whether the account has any budget left.
  *
- * This reads the bucket rather than counting against it, and the difference is
- * the whole design. A bucket that counts every attempt is a lockout weapon:
- * anyone who knows an address could spend the account's allowance and keep its
- * owner out. Only failures are counted, and only once verification has actually
- * failed, so a legitimate sign-in never consumes anything.
+ * Counting happens here and nowhere else, and it happens only after
+ * verification has actually failed. Both halves matter. Counting every attempt
+ * would let noise fill the budget; consulting the budget before verification
+ * would refuse the correct password once it was gone, and since the attacker
+ * supplies the failures, that is a lockout anyone who knows an address could
+ * trigger with twenty requests and hold indefinitely. Refusing only attempts
+ * that already failed keeps the throttle and leaves the owner a way in.
+ *
+ * The returned decision is the one that counted this failure, not a second read
+ * of the bucket. Spending the last of the budget is still allowed, so the
+ * attempt that exhausts it is answered 401 like the ones before it and the next
+ * one is answered 429. Re-reading the bucket instead would move that boundary by
+ * one, which is a visible change in when an account starts being throttled.
+ *
+ * What this does not do is bound the hashing cost of guessing at one account
+ * from many addresses. The per-address credential limit in `server.ts` bounds
+ * that, which is where a limit on request volume belongs.
  *
  * @param email - The normalised address from the request.
+ * @param context - The request, which carries the counter namespace.
+ * @returns The decision covering this failure.
+ */
+async function countAccountFailure(
+  email: string,
+  context: RequestContext,
+): Promise<RateLimitDecision> {
+  return checkSharedLimit(accountFailureBucket(email, context), ACCOUNT_FAILURE_LIMIT);
+}
+
+/**
+ * Turns a spent failure budget into a 429.
+ *
+ * @param decision - The decision from {@link countAccountFailure}.
  * @param context - The request, for the audit line.
  * @throws {AppError} 429 when the account's failure budget is spent.
  */
-async function requireAccountAttemptsRemaining(
-  email: string,
-  context: RequestContext,
-): Promise<void> {
-  const decision = await peekSharedLimit(
-    accountFailureBucket(email, context),
-    ACCOUNT_FAILURE_LIMIT,
-  );
+function refuseWhenFailureBudgetSpent(decision: RateLimitDecision, context: RequestContext): void {
   if (decision.allowed) return;
 
   audit('auth.login.throttled', { clientIp: context.clientIp, requestId: context.requestId });
@@ -154,8 +174,14 @@ export const identityRoutes: RouteTable = [
         throw new AppError('INVALID_CREDENTIALS', 'Email or password is incorrect.', 401);
       }
 
-      await requireAccountAttemptsRemaining(parsed.value.email, context);
-
+      // Verification runs before the failure budget is consulted, and the order
+      // is the security property. Gating verification on the budget meant a
+      // spent budget refused the correct password too, and the failures that
+      // spend it are supplied by whoever is guessing: twenty wrong passwords
+      // locked a known address out for the hour, renewable indefinitely. The
+      // budget still decides what a *failed* attempt is answered with, so
+      // guessing gains nothing from the change, and the account's owner can
+      // always sign in.
       let user;
       let session;
       try {
@@ -163,13 +189,15 @@ export const identityRoutes: RouteTable = [
       } catch (error) {
         // Only a rejected credential counts. A malformed request or a database
         // failure is not evidence of guessing, and counting either would let
-        // noise lock an account out.
+        // noise fill the budget up.
         if (error instanceof AppError && error.code === 'INVALID_CREDENTIALS') {
-          await checkSharedLimit(
-            accountFailureBucket(parsed.value.email, context),
-            ACCOUNT_FAILURE_LIMIT,
-          );
+          const decision = await countAccountFailure(parsed.value.email, context);
           audit('auth.login.failed', { clientIp: context.clientIp, requestId: context.requestId });
+
+          // Once the budget is gone, further guesses are throttled rather than
+          // merely rejected. Missing accounts have a bucket too, so which of the
+          // two answers comes back still discloses nothing about the address.
+          refuseWhenFailureBudgetSpent(decision, context);
         }
         throw error;
       }
