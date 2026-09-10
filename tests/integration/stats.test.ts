@@ -184,7 +184,10 @@ describe('GET /api/links/:slug/stats', () => {
     const body = (await (await readStats(link.slug, '?days=3')).json()) as StatsBody;
 
     assert.equal(body.total, 0);
-    assert.equal(body.byDay.every((day) => day.clicks === 0), true);
+    assert.equal(
+      body.byDay.every((day) => day.clicks === 0),
+      true,
+    );
   });
 
   it('rejects a window outside the permitted range', async () => {

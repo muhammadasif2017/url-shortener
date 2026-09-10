@@ -84,10 +84,7 @@ export function parseCredentials(body: unknown): ParseResult<CredentialsInput> {
 
   if (typeof rawPassword !== 'string') {
     issues.push(issue('password', 'A password is required.'));
-  } else if (
-    rawPassword.length < MIN_PASSWORD_LENGTH ||
-    rawPassword.length > MAX_PASSWORD_LENGTH
-  ) {
+  } else if (rawPassword.length < MIN_PASSWORD_LENGTH || rawPassword.length > MAX_PASSWORD_LENGTH) {
     // The maximum is not arbitrary. Hashing unbounded input is a CPU
     // amplification vector against a single-threaded service.
     issues.push(

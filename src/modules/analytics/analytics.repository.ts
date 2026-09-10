@@ -1,10 +1,5 @@
 import { pool } from '../../db/pool.ts';
-import type {
-  ClickTotals,
-  DailyClicks,
-  NewClickEvent,
-  ReferrerCount,
-} from './analytics.schema.ts';
+import type { ClickTotals, DailyClicks, NewClickEvent, ReferrerCount } from './analytics.schema.ts';
 
 /**
  * SQL for click events, and nothing else.

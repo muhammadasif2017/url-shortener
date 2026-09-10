@@ -1,12 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import {
-  generateSlug,
-  isReservedSlug,
-  SLUG_ALPHABET,
-  SLUG_LENGTH,
-} from '../../src/lib/slug.ts';
+import { generateSlug, isReservedSlug, SLUG_ALPHABET, SLUG_LENGTH } from '../../src/lib/slug.ts';
 
 describe('generateSlug', () => {
   it('returns exactly SLUG_LENGTH characters', () => {

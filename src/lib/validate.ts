@@ -122,9 +122,7 @@ export function parseDestinationUrl(
   }
 
   if (value.length > MAX_URL_LENGTH) {
-    return fail([
-      issue(field, `Must be ${MAX_URL_LENGTH} characters or fewer.`),
-    ]);
+    return fail([issue(field, `Must be ${MAX_URL_LENGTH} characters or fewer.`)]);
   }
 
   let parsed: URL;
@@ -143,18 +141,14 @@ export function parseDestinationUrl(
   }
 
   if (isSameHost(parsed, baseUrl)) {
-    return fail([
-      issue(field, 'Must not point back at this service.'),
-    ]);
+    return fail([issue(field, 'Must not point back at this service.')]);
   }
 
   // Length is checked again on the serialized form. Normalization can lengthen a
   // URL, by percent-encoding a character the caller sent raw, and the column
   // constraint applies to what is stored rather than to what arrived.
   if (parsed.href.length > MAX_URL_LENGTH) {
-    return fail([
-      issue(field, `Must be ${MAX_URL_LENGTH} characters or fewer.`),
-    ]);
+    return fail([issue(field, `Must be ${MAX_URL_LENGTH} characters or fewer.`)]);
   }
 
   return ok(parsed.href);
@@ -213,17 +207,12 @@ export function parseCustomSlug(value: unknown, field: string): ParseResult<stri
 
   if (value.length < MIN_SLUG_LENGTH || value.length > MAX_CUSTOM_SLUG_LENGTH) {
     return fail([
-      issue(
-        field,
-        `Must be between ${MIN_SLUG_LENGTH} and ${MAX_CUSTOM_SLUG_LENGTH} characters.`,
-      ),
+      issue(field, `Must be between ${MIN_SLUG_LENGTH} and ${MAX_CUSTOM_SLUG_LENGTH} characters.`),
     ]);
   }
 
   if (!CUSTOM_SLUG_PATTERN.test(value)) {
-    return fail([
-      issue(field, 'May contain only letters, digits, hyphens, and underscores.'),
-    ]);
+    return fail([issue(field, 'May contain only letters, digits, hyphens, and underscores.')]);
   }
 
   return ok(value);
@@ -245,11 +234,7 @@ export function parseCustomSlug(value: unknown, field: string): ParseResult<stri
  * @param now - The instant to treat as the present.
  * @returns The parsed `Date`, or the reasons it was rejected.
  */
-export function parseFutureInstant(
-  value: unknown,
-  field: string,
-  now: Date,
-): ParseResult<Date> {
+export function parseFutureInstant(value: unknown, field: string, now: Date): ParseResult<Date> {
   if (typeof value !== 'string') {
     return fail([issue(field, 'Must be an ISO 8601 date-time string.')]);
   }
@@ -294,9 +279,7 @@ export function parseBoundedInteger(
 
   const parsed = Number(value);
   if (parsed < options.min || parsed > options.max) {
-    return fail([
-      issue(field, `Must be between ${options.min} and ${options.max}.`),
-    ]);
+    return fail([issue(field, `Must be between ${options.min} and ${options.max}.`)]);
   }
 
   return ok(parsed);

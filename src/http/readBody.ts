@@ -74,8 +74,7 @@ export async function readBody(request: BodySource): Promise<ReadBodyResult> {
     const step = await iterator.next();
     if (step.done === true) break;
 
-    const buffer =
-      typeof step.value === 'string' ? Buffer.from(step.value, 'utf8') : step.value;
+    const buffer = typeof step.value === 'string' ? Buffer.from(step.value, 'utf8') : step.value;
     total += buffer.byteLength;
 
     if (total > MAX_BODY_BYTES) return tooLarge();

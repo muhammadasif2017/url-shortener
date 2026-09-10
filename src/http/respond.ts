@@ -1,6 +1,7 @@
 import type { ServerResponse } from 'node:http';
 
 import { env } from '../config/env.ts';
+import { REQUEST_ID_HEADER } from '../lib/requestId.ts';
 
 import type { RouteResponse } from './context.ts';
 
@@ -94,11 +95,16 @@ function strictTransportSecurity(): Record<string, string> | undefined {
  * @param response - Node's response object.
  * @param result - What the handler returned.
  * @param method - The request's method, needed to detect `HEAD`.
+ * @param requestId - Correlation id to echo back. Set here rather than by each
+ *   handler, because the responses that most need it are the ones no handler
+ *   produced: the 404, the 405, and the failure caught while writing a
+ *   response.
  */
 export function send(
   response: ServerResponse,
   result: RouteResponse,
   method: string,
+  requestId?: string,
 ): void {
   // Set on every response, including redirects and errors. This service only
   // ever answers with JSON or an empty body, so there is nothing for a browser
@@ -130,6 +136,7 @@ export function send(
     'Cache-Control': 'no-store',
 
     ...(strictTransportSecurity() ?? {}),
+    ...(requestId === undefined ? {} : { [REQUEST_ID_HEADER]: requestId }),
     ...result.headers,
   };
 

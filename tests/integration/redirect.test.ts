@@ -4,12 +4,7 @@ import { after, before, beforeEach, describe, it } from 'node:test';
 import { closePool } from '../../src/db/pool.ts';
 import { identityRoutes } from '../../src/modules/identity/identity.routes.ts';
 import { linkRoutes } from '../../src/modules/links/links.routes.ts';
-import {
-  authHeaders,
-  registerAccount,
-  truncateUsers,
-  type TestAccount,
-} from '../helpers/auth.ts';
+import { authHeaders, registerAccount, truncateUsers, type TestAccount } from '../helpers/auth.ts';
 import { insertLink, truncateLinks } from '../helpers/db.ts';
 import { startTestServer, type TestServer } from '../helpers/server.ts';
 
@@ -210,7 +205,7 @@ describe('GET /api/links', () => {
     assert.equal((await server.fetch('/api/links')).status, 401);
   });
 
-  it('returns only the caller\'s own links, newest first', async () => {
+  it("returns only the caller's own links, newest first", async () => {
     const mine = await registerAccount(server);
     const theirs = await registerAccount(server);
 
@@ -295,10 +290,7 @@ describe('GET /api/links', () => {
 describe('DELETE /api/links/:slug', () => {
   it('requires a session', async () => {
     await insertLink({ slug: 'doomed' });
-    assert.equal(
-      (await server.fetch('/api/links/doomed', { method: 'DELETE' })).status,
-      401,
-    );
+    assert.equal((await server.fetch('/api/links/doomed', { method: 'DELETE' })).status, 401);
   });
 
   it('deletes an owned link and then reports it gone on both routes', async () => {

@@ -63,9 +63,7 @@ export type Router = {
  */
 function compile(path: string): Segment[] {
   return splitPath(path).map((raw) =>
-    raw.startsWith(':')
-      ? { kind: 'param', name: raw.slice(1) }
-      : { kind: 'literal', value: raw },
+    raw.startsWith(':') ? { kind: 'param', name: raw.slice(1) } : { kind: 'literal', value: raw },
   );
 }
 

@@ -60,6 +60,85 @@ describe('GET /health', () => {
   });
 });
 
+describe('liveness and readiness', () => {
+  it('answers liveness without touching the database', async () => {
+    const response = await server.fetch('/health/live');
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { status: 'ok' });
+  });
+
+  it('answers readiness with the database verdict', async () => {
+    const response = await server.fetch('/health/ready');
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { status: 'ok', database: 'ok' });
+  });
+
+  it('keeps /health reporting readiness, so existing probes are unaffected', async () => {
+    const [legacy, ready] = await Promise.all([
+      server.fetch('/health'),
+      server.fetch('/health/ready'),
+    ]);
+
+    assert.equal(legacy.status, ready.status);
+    assert.deepEqual(await legacy.json(), await ready.json());
+  });
+
+  it('does not let the redirect route swallow a two-segment health path', async () => {
+    // `/:slug` is one segment and `/health/live` is two, so the router must not
+    // treat this as a link lookup even though the redirect route is registered
+    // first.
+    const response = await server.fetch('/health/live');
+    assert.equal(response.status, 200);
+  });
+});
+
+describe('request correlation', () => {
+  it('echoes an id on every response', async () => {
+    const response = await server.fetch('/health');
+    assert.match(response.headers.get('x-request-id') ?? '', /\S/);
+  });
+
+  it('gives two requests different ids', async () => {
+    const [first, second] = await Promise.all([server.fetch('/health'), server.fetch('/health')]);
+
+    assert.notEqual(first.headers.get('x-request-id'), second.headers.get('x-request-id'));
+  });
+
+  it('adopts a caller-supplied id', async () => {
+    const response = await server.fetch('/health', {
+      headers: { 'x-request-id': 'trace-abc-123' },
+    });
+
+    assert.equal(response.headers.get('x-request-id'), 'trace-abc-123');
+  });
+
+  it('replaces an unsafe caller-supplied id instead of echoing it', async () => {
+    const response = await server.fetch('/health', {
+      headers: { 'x-request-id': 'has spaces and <brackets>' },
+    });
+
+    const echoed = response.headers.get('x-request-id') ?? '';
+    assert.notEqual(echoed, 'has spaces and <brackets>');
+    assert.match(echoed, /^[A-Za-z0-9._~-]+$/);
+  });
+
+  it('carries an id on a 404, which no handler produced', async () => {
+    const response = await server.fetch('/api/nothing/here');
+
+    assert.equal(response.status, 404);
+    assert.match(response.headers.get('x-request-id') ?? '', /\S/);
+  });
+
+  it('carries an id on a 405', async () => {
+    const response = await server.fetch('/health', { method: 'POST' });
+
+    assert.equal(response.status, 405);
+    assert.match(response.headers.get('x-request-id') ?? '', /\S/);
+  });
+});
+
 describe('request pipeline', () => {
   it('returns 404 in the standard error shape for an unknown path', async () => {
     const response = await server.fetch('/api/nothing/here');

@@ -55,10 +55,7 @@ export type ClosableServer = {
  * @param signal - Which signal triggered this, for the log line.
  * @returns The exit code the process should use.
  */
-export async function performShutdown(
-  server: ClosableServer,
-  signal: string,
-): Promise<number> {
+export async function performShutdown(server: ClosableServer, signal: string): Promise<number> {
   log('info', 'shutting down', { signal });
 
   try {
@@ -67,7 +64,10 @@ export async function performShutdown(
     // finished.
     await withDeadline(
       new Promise<void>((resolve, reject) => {
-        server.close((error) => (error ? reject(error) : resolve()));
+        server.close((error) => {
+          if (error) reject(error);
+          else resolve();
+        });
       }),
       REQUEST_DRAIN_TIMEOUT_MS,
       'in-flight requests',

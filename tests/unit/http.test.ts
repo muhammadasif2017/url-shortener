@@ -147,7 +147,7 @@ describe('response builders', () => {
 
     // A cached redirect keeps working after the link is deleted, and hides
     // every later visit from the server.
-    assert.equal(response.headers?.['Cache-Control'], 'no-store');
+    assert.equal(response.headers['Cache-Control'], 'no-store');
   });
 
   it('builds an empty 204', () => {
@@ -180,9 +180,7 @@ describe('toErrorResponse', () => {
     assert.equal(response.status, 400);
     const body = errorBody(response.body);
     assert.equal(body.code, 'VALIDATION_FAILED');
-    assert.deepEqual(body.details, [
-      { field: 'url', message: 'Must be an http or https URL.' },
-    ]);
+    assert.deepEqual(body.details, [{ field: 'url', message: 'Must be an http or https URL.' }]);
   });
 
   it('carries headers a status requires, such as Retry-After', () => {

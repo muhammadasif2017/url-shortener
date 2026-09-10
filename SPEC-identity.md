@@ -64,12 +64,12 @@ services. This service is one process.
 
 ### Table: `sessions`
 
-| Column | Type | Constraints |
-|---|---|---|
-| `id` | `text` | primary key; base64url of 32 random bytes |
-| `user_id` | `bigint` | not null, references `users(id)` on delete cascade |
-| `expires_at` | `timestamptz` | not null |
-| `created_at` | `timestamptz` | not null, default `now()` |
+| Column       | Type          | Constraints                                        |
+| ------------ | ------------- | -------------------------------------------------- |
+| `id`         | `text`        | primary key; base64url of 32 random bytes          |
+| `user_id`    | `bigint`      | not null, references `users(id)` on delete cascade |
+| `expires_at` | `timestamptz` | not null                                           |
+| `created_at` | `timestamptz` | not null, default `now()`                          |
 
 - Expiry is checked in SQL against `now()`, so the database clock is the single
   source of truth, exactly as link expiry already is.
@@ -170,14 +170,14 @@ This is the concrete benefit of choosing an opaque id over a JWT.
 
 **Resolved.** `node:crypto` `scrypt`, async form only.
 
-| Parameter | Value |
-|---|---|
-| `N` (cost) | 32768 |
-| `r` (block size) | 8 |
-| `p` (parallelisation) | 1 |
-| `keylen` | 32 bytes |
-| salt | 16 bytes from `randomBytes`, unique per user |
-| `maxmem` | 64 MiB, set explicitly |
+| Parameter             | Value                                        |
+| --------------------- | -------------------------------------------- |
+| `N` (cost)            | 32768                                        |
+| `r` (block size)      | 8                                            |
+| `p` (parallelisation) | 1                                            |
+| `keylen`              | 32 bytes                                     |
+| salt                  | 16 bytes from `randomBytes`, unique per user |
+| `maxmem`              | 64 MiB, set explicitly                       |
 
 ### Why each of those is written down
 
@@ -349,9 +349,9 @@ expired.
 
 ## Table: `users`
 
-| Column | Type | Constraints |
-|---|---|---|
-| `id` | `bigint` | primary key, generated always as identity |
-| `email` | `text` | not null, unique, stored lowercased |
-| `password_hash` | `text` | not null, PHC-style string carrying its parameters |
-| `created_at` | `timestamptz` | not null, default `now()` |
+| Column          | Type          | Constraints                                        |
+| --------------- | ------------- | -------------------------------------------------- |
+| `id`            | `bigint`      | primary key, generated always as identity          |
+| `email`         | `text`        | not null, unique, stored lowercased                |
+| `password_hash` | `text`        | not null, PHC-style string carrying its parameters |
+| `created_at`    | `timestamptz` | not null, default `now()`                          |

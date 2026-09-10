@@ -32,11 +32,7 @@ function main(): void {
   // Every module's routes are assembled here, in one visible list, rather than
   // registered by import side effects. A route that exists only because a file
   // was imported is a route nobody can find later.
-  const server: Server = createAppServer([
-    ...linkRoutes,
-    ...identityRoutes,
-    ...analyticsRoutes,
-  ]);
+  const server: Server = createAppServer([...linkRoutes, ...identityRoutes, ...analyticsRoutes]);
 
   // Click events expire. The timer is unreferenced, so it never delays exit, and
   // it is started here rather than inside the analytics module so that importing

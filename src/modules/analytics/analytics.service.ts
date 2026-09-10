@@ -155,7 +155,6 @@ export function recordClick(input: ClickInput): void {
       });
     }),
   );
-
 }
 
 /**

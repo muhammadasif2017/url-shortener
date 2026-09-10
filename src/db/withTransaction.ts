@@ -22,9 +22,7 @@ import { pool } from './pool.ts';
  * @returns Whatever the callback returns, after the commit succeeds.
  * @throws Whatever the callback throws, after rolling back.
  */
-export async function withTransaction<T>(
-  work: (client: pg.PoolClient) => Promise<T>,
-): Promise<T> {
+export async function withTransaction<T>(work: (client: pg.PoolClient) => Promise<T>): Promise<T> {
   const client = await pool().connect();
 
   try {

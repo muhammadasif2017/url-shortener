@@ -11,6 +11,11 @@
     "dev": "node --watch --env-file=.env --experimental-strip-types src/index.ts",
     "start": "node --env-file-if-exists=.env --experimental-strip-types src/index.ts",
     "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write \"**/*.{ts,js,json,md}\"",
+    "format:check": "prettier --check \"**/*.{ts,js,json,md}\"",
+    "verify": "npm run typecheck && npm run lint && npm run format:check && npm test",
     "test:unit": "node --test --experimental-strip-types \"tests/unit/**/*.test.ts\"",
     "pretest": "npm run migrate:test",
     "test": "node --test --test-concurrency=1 --env-file=.env.test --experimental-strip-types \"tests/**/*.test.ts\"",
@@ -29,6 +34,9 @@
   "devDependencies": {
     "@types/node": "^22.15.0",
     "@types/pg": "^8.11.10",
-    "typescript": "^5.8.3"
+    "eslint": "^9.39.5",
+    "prettier": "^3.9.6",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.70.0"
   }
 }

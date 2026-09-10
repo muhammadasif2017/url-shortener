@@ -29,8 +29,10 @@ const router = createRouter(TABLE);
 
 /** Asserts a match and returns it, so tests read as assertions. */
 function expectMatch(result: MatchResult): Extract<MatchResult, { type: 'matched' }> {
-  assert.equal(result.type, 'matched', `expected a match, got ${result.type}`);
-  return result as Extract<MatchResult, { type: 'matched' }>;
+  // `assert.ok` narrows the union where `assert.equal` does not, so the return
+  // needs no cast and a wrong shape fails here rather than at the use site.
+  assert.ok(result.type === 'matched', `expected a match, got ${result.type}`);
+  return result;
 }
 
 describe('route precedence', () => {
@@ -112,7 +114,6 @@ describe('methods', () => {
 
   it('returns 405 with Allow when the path exists but the method does not', () => {
     const result = router.match('PUT', '/api/links');
-    assert.equal(result.type, 'method-not-allowed');
     assert.ok(result.type === 'method-not-allowed');
     assert.deepEqual(result.allow, ['GET', 'HEAD', 'POST']);
   });

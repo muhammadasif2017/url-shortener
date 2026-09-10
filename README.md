@@ -55,14 +55,14 @@ where `details` carries field-level problems for a validation failure.
 
 ### Links
 
-| Method | Path | Auth | What it does |
-|---|---|---|---|
-| `POST` | `/api/links` | required | Creates a link. `201` with the slug and short URL |
-| `GET` | `/:slug` | none | `302` to the destination. `404` unknown, `410` expired |
-| `HEAD` | `/:slug` | none | Same status and headers, no body |
-| `GET` | `/api/links/:slug` | required | The link's metadata, including a past expiry. `403` for someone else's |
-| `GET` | `/api/links` | required | The caller's own links, newest first, cursor paginated |
-| `DELETE` | `/api/links/:slug` | required | `204`. `403` for someone else's link or an ownerless one |
+| Method   | Path               | Auth     | What it does                                                           |
+| -------- | ------------------ | -------- | ---------------------------------------------------------------------- |
+| `POST`   | `/api/links`       | required | Creates a link. `201` with the slug and short URL                      |
+| `GET`    | `/:slug`           | none     | `302` to the destination. `404` unknown, `410` expired                 |
+| `HEAD`   | `/:slug`           | none     | Same status and headers, no body                                       |
+| `GET`    | `/api/links/:slug` | required | The link's metadata, including a past expiry. `403` for someone else's |
+| `GET`    | `/api/links`       | required | The caller's own links, newest first, cursor paginated                 |
+| `DELETE` | `/api/links/:slug` | required | `204`. `403` for someone else's link or an ownerless one               |
 
 ```bash
 curl -X POST http://localhost:3000/api/links \
@@ -93,12 +93,12 @@ delete, or read statistics for one, because nobody can prove they made it.
 
 ### Accounts
 
-| Method | Path | What it does |
-|---|---|---|
+| Method | Path                 | What it does                                                    |
+| ------ | -------------------- | --------------------------------------------------------------- |
 | `POST` | `/api/auth/register` | Creates an account. Always `202`, never a session. Sign in next |
-| `POST` | `/api/auth/login` | Signs in. `401` on bad credentials |
-| `POST` | `/api/auth/logout` | Deletes the session row and clears the cookie |
-| `GET` | `/api/auth/me` | The current user, or `401` |
+| `POST` | `/api/auth/login`    | Signs in. `401` on bad credentials                              |
+| `POST` | `/api/auth/logout`   | Deletes the session row and clears the cookie                   |
+| `GET`  | `/api/auth/me`       | The current user, or `401`                                      |
 
 Sessions are opaque random ids stored in a table, not JWTs, so they are
 revocable server-side and there is no signature verification to get wrong. The
@@ -111,10 +111,10 @@ session, `403` for another user's link or an ownerless one, `404` for an unknown
 slug. A slug appears in browser history and referrer headers, so it is public by
 construction and cannot also be the credential guarding click history.
 
-| Method | Path | Query | What it does |
-|---|---|---|---|
-| `GET` | `/api/links/:slug/stats` | `days` 1–90, default 30 | Total, unique visitors, bot clicks, per-day series |
-| `GET` | `/api/links/:slug/referrers` | `days`, `limit` 1–50, default 10 | Ranked traffic sources |
+| Method | Path                         | Query                            | What it does                                       |
+| ------ | ---------------------------- | -------------------------------- | -------------------------------------------------- |
+| `GET`  | `/api/links/:slug/stats`     | `days` 1–90, default 30          | Total, unique visitors, bot clicks, per-day series |
+| `GET`  | `/api/links/:slug/referrers` | `days`, `limit` 1–50, default 10 | Ranked traffic sources                             |
 
 ```json
 {
@@ -123,7 +123,10 @@ construction and cannot also be the credential guarding click history.
   "total": 42,
   "uniqueVisitors": 17,
   "botClicks": 5,
-  "byDay": [{ "date": "2026-09-03", "clicks": 0 }, { "date": "2026-09-04", "clicks": 3 }]
+  "byDay": [
+    { "date": "2026-09-03", "clicks": 0 },
+    { "date": "2026-09-04", "clicks": 3 }
+  ]
 }
 ```
 
@@ -136,22 +139,65 @@ label, because a site could otherwise name itself "direct".
 a crash between the response and the insert drops the event. Anything that
 displays these numbers should say so.
 
+## Operations
+
+### Health
+
+| Method | Path            | What it does                                                       |
+| ------ | --------------- | ------------------------------------------------------------------ |
+| `GET`  | `/health/live`  | Liveness. Touches nothing outside the process                      |
+| `GET`  | `/health/ready` | Readiness. `200` when the database answers, `503` when it does not |
+| `GET`  | `/health`       | The same answer as `/health/ready`, kept for existing probes       |
+
+The split exists because an orchestrator acts on the two answers differently. A
+failed liveness probe restarts the container; a failed readiness probe only
+takes it out of rotation. A restart does not repair an unreachable database, so
+pointing a restart-triggering probe at the database turns a database outage into
+a restart loop across every instance, at the moment the database is least able
+to absorb reconnections. Point container health checks and Kubernetes
+`livenessProbe` at `/health/live`, and load balancers and `readinessProbe` at
+`/health/ready`.
+
+### Request correlation
+
+Every response carries an `X-Request-Id` header, and every log and audit line
+written while serving that request carries the same value under `requestId`.
+That is what makes a report reconstructable: one id gathers the audit line, the
+error, and the rate-limit refusal into a single story.
+
+An inbound `X-Request-Id` is adopted when it is at most 128 characters and
+contains only unreserved URL characters, so a trace started at a proxy continues
+here. Anything else is replaced with a fresh UUID rather than rejected, because
+a header nothing depends on must not be able to fail a request. The value is
+echoed and logged, so the character restriction is what keeps a caller from
+splitting a response header.
+
+### API contract
+
+`openapi.json` describes every route, and `tests/unit/openapi.test.ts` fails if
+it drifts from the routes the server actually serves. Prose lives in
+`SPEC.md`; the JSON is the machine-readable form of the same contract, not a
+second one.
+
 ## Commands
 
-| Command | What it does |
-|---|---|
-| `npm run dev` | Development server, restarting on change |
-| `npm start` | Production server |
-| `npm run typecheck` | Type check only; this project never emits JavaScript |
-| `npm test` | Everything, after migrating the test database |
-| `npm run test:unit` | Unit tests only; needs no database |
-| `npm run test:watch` | Tests, re-running on change |
-| `npm run test:coverage` | Tests with coverage |
-| `npm run db:up` / `db:down` | Start and stop PostgreSQL |
-| `npm run migrate` | Apply pending migrations |
-| `npm run migrate:test` | Apply them to the test database |
-| `npm run migrate:status` | Show applied and pending migrations |
-| `npm run migrate:new -- <name>` | Create an empty migration |
+| Command                           | What it does                                         |
+| --------------------------------- | ---------------------------------------------------- |
+| `npm run dev`                     | Development server, restarting on change             |
+| `npm start`                       | Production server                                    |
+| `npm run typecheck`               | Type check only; this project never emits JavaScript |
+| `npm run verify`                  | Every gate CI runs, in the same order                |
+| `npm run lint` / `lint:fix`       | ESLint, with type information                        |
+| `npm run format` / `format:check` | Prettier                                             |
+| `npm test`                        | Everything, after migrating the test database        |
+| `npm run test:unit`               | Unit tests only; needs no database                   |
+| `npm run test:watch`              | Tests, re-running on change                          |
+| `npm run test:coverage`           | Tests with coverage                                  |
+| `npm run db:up` / `db:down`       | Start and stop PostgreSQL                            |
+| `npm run migrate`                 | Apply pending migrations                             |
+| `npm run migrate:test`            | Apply them to the test database                      |
+| `npm run migrate:status`          | Show applied and pending migrations                  |
+| `npm run migrate:new -- <name>`   | Create an empty migration                            |
 
 Set `LOG_IN_TESTS=1` to see log output during tests, which is suppressed by
 default so that deliberate failure-path tests do not bury the runner's output.
@@ -170,6 +216,8 @@ src/
   shutdown.ts          The graceful shutdown sequence, separate so it is testable
 migrations/            Numbered SQL, applied in order, never edited once applied
 scripts/migrate.ts     The migration runner
+openapi.json           The API contract, checked against the routes by a test
+.github/workflows/     CI: type check, lint, format, tests, image build
 tests/unit/            Pure functions; no database
 tests/integration/     Real HTTP against a real database
 ```
@@ -219,7 +267,8 @@ removed rather than left as a switch that could be turned back on.
 ## Status
 
 All five phases are complete: foundation, links, hardening, identity, and
-analytics. 329 tests pass and `npm run typecheck` is clean.
+analytics. 355 tests pass, and the type check, the linter, and the formatter
+are all clean.
 
 A threat model of the running service is in
 [`THREAT-MODEL.md`](THREAT-MODEL.md). All twelve of its findings are fixed.

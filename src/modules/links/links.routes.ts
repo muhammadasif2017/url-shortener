@@ -78,8 +78,6 @@ function decodeCursor(cursor: string): string {
   return decoded;
 }
 
-
-
 /**
  * Every route this module serves.
  *
@@ -140,7 +138,12 @@ export const linkRoutes: RouteTable = [
       if (!parsed.ok) throw AppError.validation(parsed.issues);
 
       const link = await linkService.createLink(parsed.value, ownerId);
-      audit('link.created', { userId: ownerId, slug: link.slug, clientIp: context.clientIp });
+      audit('link.created', {
+        userId: ownerId,
+        slug: link.slug,
+        clientIp: context.clientIp,
+        requestId: context.requestId,
+      });
 
       return json(201, toLinkResponse(link));
     },
@@ -151,11 +154,11 @@ export const linkRoutes: RouteTable = [
     async handle(context): Promise<RouteResponse> {
       const ownerId = await identityService.requireUserId(readSessionId(context));
 
-      const limit = parseBoundedInteger(
-        context.query.get('limit') ?? undefined,
-        'limit',
-        { min: 1, max: MAX_LIMIT, fallback: DEFAULT_LIMIT },
-      );
+      const limit = parseBoundedInteger(context.query.get('limit') ?? undefined, 'limit', {
+        min: 1,
+        max: MAX_LIMIT,
+        fallback: DEFAULT_LIMIT,
+      });
       if (!limit.ok) throw AppError.validation(limit.issues);
 
       const rawCursor = context.query.get('cursor');
@@ -187,7 +190,12 @@ export const linkRoutes: RouteTable = [
       const slug = context.params['slug'] ?? '';
 
       await linkService.deleteLink(slug, userId);
-      audit('link.deleted', { userId, slug, clientIp: context.clientIp });
+      audit('link.deleted', {
+        userId,
+        slug,
+        clientIp: context.clientIp,
+        requestId: context.requestId,
+      });
 
       return noContent();
     },

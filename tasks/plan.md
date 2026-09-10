@@ -130,32 +130,32 @@ questions. Then build it.
 
 ## Risks and Mitigations
 
-| Risk | Where it bites | Mitigation |
-|---|---|---|
-| Hand-written router matches the wrong route | `/health` swallowed by `/:slug` | Literal-before-parameter rule plus segment-count matching, unit tested in Phase A before any module registers a route |
-| `HEAD` requests fall through to 404 | Link checkers and chat unfurlers see a broken link | Router matches `HEAD` against `GET` entries; covered by a Phase B test |
-| `--experimental-strip-types` behaviour changes | Every command | Node version pinned in `.nvmrc` and in the Dockerfile. Falling back to a `tsc` build touches two npm scripts |
-| `--env-file` on a platform with no `.env` | Service crashes on boot in production | `start` and `migrate` use `--env-file-if-exists`; local scripts keep the strict form |
-| Test database never created | `npm test` cannot run at all | Compose init script creates `urlshortener_test`, with the first-initialisation caveat written down |
-| Request body read without a limit | Memory exhaustion from one request | 16 KB cap enforced while streaming, unit tested on `readBody` directly rather than only through HTTP |
-| Migration runner is hand-written | Corrupt schema state | Runner records applied filenames in a table and runs each file in a transaction. Migrations run as a pre-deploy step, never at container start |
-| Client IP resolved wrongly behind the platform proxy | Rate limiter becomes one global bucket; unique visitors collapse to one | Single shared resolver, `TRUST_PROXY_HOPS` from config, counted from the right-hand end. Verified as a deployment success criterion |
-| Rate-limit map grows without bound | Memory exhaustion from unauthenticated traffic | Sweep on write, hard cap of 10,000 entries |
-| `scrypt` cost raised past default `maxmem` | `ERR_CRYPTO_INVALID_SCRYPT_PARAMS` at sign-in | Parameters and `maxmem` specified together; parameters stored inside the hash string |
-| Fire-and-forget click write rejects unhandled | Process exit under load | Mandatory `.catch()`, synchronous registration into the pending set, loop-until-empty drain, bounded deadlines |
-| Scope creep into load balancing, Redis, queues | Project never finishes | Recorded as declined in `SPEC.md`. Any reversal edits the decision record first |
+| Risk                                                 | Where it bites                                                          | Mitigation                                                                                                                                     |
+| ---------------------------------------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Hand-written router matches the wrong route          | `/health` swallowed by `/:slug`                                         | Literal-before-parameter rule plus segment-count matching, unit tested in Phase A before any module registers a route                          |
+| `HEAD` requests fall through to 404                  | Link checkers and chat unfurlers see a broken link                      | Router matches `HEAD` against `GET` entries; covered by a Phase B test                                                                         |
+| `--experimental-strip-types` behaviour changes       | Every command                                                           | Node version pinned in `.nvmrc` and in the Dockerfile. Falling back to a `tsc` build touches two npm scripts                                   |
+| `--env-file` on a platform with no `.env`            | Service crashes on boot in production                                   | `start` and `migrate` use `--env-file-if-exists`; local scripts keep the strict form                                                           |
+| Test database never created                          | `npm test` cannot run at all                                            | Compose init script creates `urlshortener_test`, with the first-initialisation caveat written down                                             |
+| Request body read without a limit                    | Memory exhaustion from one request                                      | 16 KB cap enforced while streaming, unit tested on `readBody` directly rather than only through HTTP                                           |
+| Migration runner is hand-written                     | Corrupt schema state                                                    | Runner records applied filenames in a table and runs each file in a transaction. Migrations run as a pre-deploy step, never at container start |
+| Client IP resolved wrongly behind the platform proxy | Rate limiter becomes one global bucket; unique visitors collapse to one | Single shared resolver, `TRUST_PROXY_HOPS` from config, counted from the right-hand end. Verified as a deployment success criterion            |
+| Rate-limit map grows without bound                   | Memory exhaustion from unauthenticated traffic                          | Sweep on write, hard cap of 10,000 entries                                                                                                     |
+| `scrypt` cost raised past default `maxmem`           | `ERR_CRYPTO_INVALID_SCRYPT_PARAMS` at sign-in                           | Parameters and `maxmem` specified together; parameters stored inside the hash string                                                           |
+| Fire-and-forget click write rejects unhandled        | Process exit under load                                                 | Mandatory `.catch()`, synchronous registration into the pending set, loop-until-empty drain, bounded deadlines                                 |
+| Scope creep into load balancing, Redis, queues       | Project never finishes                                                  | Recorded as declined in `SPEC.md`. Any reversal edits the decision record first                                                                |
 
 ## Verification Checkpoints
 
 A checkpoint is a hard stop. Do not begin the next phase until it passes.
 
-| After phase | Must be true |
-|---|---|
-| A | Server starts. `/health` returns 200 with `database: "ok"`. Unit tests pass for slug, validators, client IP, router precedence, and body limit. `npm run typecheck` clean |
-| B | Every `SPEC-links.md` verification item passes. `pg` is still the only production dependency |
-| C | Image builds and runs as non-root with a healthy `HEALTHCHECK`. Public URL responds. `TRUST_PROXY_HOPS` verified by two clients producing two rate-limit buckets. Both unauthenticated admin routes return 404 without the flag |
-| D | Cookie is `HttpOnly` and `Secure`, named `__Host-session` in production. Unknown and expired sessions return 401. Sign-out deletes the row and the old cookie fails. Cross-user delete returns 403 |
-| E | After `drainPendingWrites()`, the click count equals the number of redirects performed in the test |
+| After phase | Must be true                                                                                                                                                                                                                    |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A           | Server starts. `/health` returns 200 with `database: "ok"`. Unit tests pass for slug, validators, client IP, router precedence, and body limit. `npm run typecheck` clean                                                       |
+| B           | Every `SPEC-links.md` verification item passes. `pg` is still the only production dependency                                                                                                                                    |
+| C           | Image builds and runs as non-root with a healthy `HEALTHCHECK`. Public URL responds. `TRUST_PROXY_HOPS` verified by two clients producing two rate-limit buckets. Both unauthenticated admin routes return 404 without the flag |
+| D           | Cookie is `HttpOnly` and `Secure`, named `__Host-session` in production. Unknown and expired sessions return 401. Sign-out deletes the row and the old cookie fails. Cross-user delete returns 403                              |
+| E           | After `drainPendingWrites()`, the click count equals the number of redirects performed in the test                                                                                                                              |
 
 ## What Is Explicitly Not in This Plan
 

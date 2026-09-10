@@ -52,23 +52,23 @@ A dependency is only justified when Node has no equivalent primitive at all.
 
 ### What the standard library replaces
 
-| Common package | Built-in used instead |
-|---|---|
-| express | `node:http` plus a hand-written router |
-| body-parser | Async iteration over the request stream |
-| dotenv | `node --env-file` locally, `--env-file-if-exists` in production |
-| tsx, ts-node | `node --experimental-strip-types` |
-| vitest, jest | `node:test` and `node:assert/strict` |
-| supertest | Global `fetch` against a real listening server |
-| nyc, c8 | `node --experimental-test-coverage` |
-| nanoid, uuid | `node:crypto` (`randomBytes`, `randomUUID`) |
-| bcrypt, argon2 | `node:crypto` (`scrypt`, `timingSafeEqual`) |
-| jsonwebtoken | `node:crypto` `randomBytes` plus a `sessions` table |
-| cookie-parser | Hand-written parse and serialise in `src/http/cookies.ts` |
-| zod, joi | Hand-written parse functions returning narrowed types |
-| winston, pino | JSON written to stdout by a small logger module |
-| node-pg-migrate | Numbered SQL files plus a small migration runner |
-| nodemon | `node --watch` |
+| Common package  | Built-in used instead                                           |
+| --------------- | --------------------------------------------------------------- |
+| express         | `node:http` plus a hand-written router                          |
+| body-parser     | Async iteration over the request stream                         |
+| dotenv          | `node --env-file` locally, `--env-file-if-exists` in production |
+| tsx, ts-node    | `node --experimental-strip-types`                               |
+| vitest, jest    | `node:test` and `node:assert/strict`                            |
+| supertest       | Global `fetch` against a real listening server                  |
+| nyc, c8         | `node --experimental-test-coverage`                             |
+| nanoid, uuid    | `node:crypto` (`randomBytes`, `randomUUID`)                     |
+| bcrypt, argon2  | `node:crypto` (`scrypt`, `timingSafeEqual`)                     |
+| jsonwebtoken    | `node:crypto` `randomBytes` plus a `sessions` table             |
+| cookie-parser   | Hand-written parse and serialise in `src/http/cookies.ts`       |
+| zod, joi        | Hand-written parse functions returning narrowed types           |
+| winston, pino   | JSON written to stdout by a small logger module                 |
+| node-pg-migrate | Numbered SQL files plus a small migration runner                |
+| nodemon         | `node --watch`                                                  |
 
 ### The one unavoidable dependency
 
@@ -100,11 +100,11 @@ Being Node-first is not an excuse to reimplement security primitives badly.
 
 ## Capability Map
 
-| Module id | Responsibility | Depends on |
-|---|---|---|
-| links | Slug generation, redirect resolution, link CRUD, expiry | — |
-| identity | Accounts, password hashing, cookie sessions, link ownership | links |
-| analytics | Click event capture, per-link statistics | links |
+| Module id | Responsibility                                              | Depends on |
+| --------- | ----------------------------------------------------------- | ---------- |
+| links     | Slug generation, redirect resolution, link CRUD, expiry     | —          |
+| identity  | Accounts, password hashing, cookie sessions, link ownership | links      |
+| analytics | Click event capture, per-link statistics                    | links      |
 
 Build order: `links` → `identity` → `analytics`
 
@@ -121,23 +121,23 @@ Module specs: `SPEC-links.md`, `SPEC-identity.md`, `SPEC-analytics.md`.
 
 ## Tech Stack
 
-| Concern | Choice | Reason |
-|---|---|---|
-| Runtime | Node.js 22.15 LTS | Already installed; ships every primitive below |
-| Language | TypeScript 5.8 or newer, types stripped at runtime | Type safety with no build step; 5.8 is the first version with `erasableSyntaxOnly` |
-| HTTP server | `node:http` | The request lifecycle stays visible |
-| Routing | Hand-written matcher over `URLPattern`-style segments | Teaches what Express does |
-| Database | PostgreSQL 16 | Teaches constraints, transactions, and indexes |
-| DB driver | `pg` with a connection pool | Raw SQL keeps the query layer visible |
-| Migrations | Numbered SQL files plus a runner script | Reversible, no dependency |
-| Validation | Hand-written parse functions | Type narrowing done explicitly |
-| Password hashing | `node:crypto` async `scrypt`, tuned parameters | Memory-hard, built in, no native module to compile |
-| Sessions | Opaque random session id in a `sessions` table | No signature to verify, so no signature to get wrong |
-| Tests | `node:test` and `node:assert/strict` | Built in, no test framework to configure |
-| Rate limiting | In-memory `Map` with sweep-on-write eviction | Correct for a single process; no dependency needed |
-| Local infrastructure | Docker Compose | Postgres without polluting Windows |
-| Deployment | Render, free tier, Docker runtime | Free, gives a public URL |
-| Production database | Render PostgreSQL, free tier | Same platform, private network |
+| Concern              | Choice                                                | Reason                                                                             |
+| -------------------- | ----------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| Runtime              | Node.js 22.15 LTS                                     | Already installed; ships every primitive below                                     |
+| Language             | TypeScript 5.8 or newer, types stripped at runtime    | Type safety with no build step; 5.8 is the first version with `erasableSyntaxOnly` |
+| HTTP server          | `node:http`                                           | The request lifecycle stays visible                                                |
+| Routing              | Hand-written matcher over `URLPattern`-style segments | Teaches what Express does                                                          |
+| Database             | PostgreSQL 16                                         | Teaches constraints, transactions, and indexes                                     |
+| DB driver            | `pg` with a connection pool                           | Raw SQL keeps the query layer visible                                              |
+| Migrations           | Numbered SQL files plus a runner script               | Reversible, no dependency                                                          |
+| Validation           | Hand-written parse functions                          | Type narrowing done explicitly                                                     |
+| Password hashing     | `node:crypto` async `scrypt`, tuned parameters        | Memory-hard, built in, no native module to compile                                 |
+| Sessions             | Opaque random session id in a `sessions` table        | No signature to verify, so no signature to get wrong                               |
+| Tests                | `node:test` and `node:assert/strict`                  | Built in, no test framework to configure                                           |
+| Rate limiting        | In-memory `Map` with sweep-on-write eviction          | Correct for a single process; no dependency needed                                 |
+| Local infrastructure | Docker Compose                                        | Postgres without polluting Windows                                                 |
+| Deployment           | Render, free tier, Docker runtime                     | Free, gives a public URL                                                           |
+| Production database  | Render PostgreSQL, free tier                          | Same platform, private network                                                     |
 
 Postgres binds to host port **5433**, because port 5432 is already taken by the
 `job-tracker` containers on this machine. Redis, if it is ever added, binds to
@@ -153,7 +153,7 @@ most of it at type-check time; Node throws
 Forbidden syntax, each verified to fail on Node 22.15:
 
 - `enum` **and** `const enum`. Use a `const` object plus a union type. `const
-  enum` is not an exception, despite looking erasable.
+enum` is not an exception, despite looking erasable.
 - Constructor parameter properties. Assign fields explicitly.
 - `namespace` and `module` declarations containing runtime code.
 - `import x = require(...)` aliases.
@@ -307,18 +307,18 @@ script correct on a POSIX shell, which would otherwise expand `**` first.
 required variable is missing or fails validation, rather than starting in a
 broken state and failing at the first request.
 
-| Variable | Required | Example | Notes |
-|---|---|---|---|
-| `NODE_ENV` | yes | `development` | One of `development`, `test`, `production` |
-| `PORT` | yes | `3000` | Integer, 1 to 65535 |
-| `BASE_URL` | yes | `http://localhost:3000` | Used to build `shortUrl`; no trailing slash |
-| `DATABASE_URL` | yes | `postgres://postgres:postgres@localhost:5433/urlshortener` | |
-| `DATABASE_SSL` | no | `false` | Defaults to on in production. Separate from `NODE_ENV` so the production image can run against a local database |
-| `TRUST_PROXY_HOPS` | yes | `0` | `0` locally, correct hop count when deployed behind a proxy |
-| `IP_HASH_SALT` | yes | 32 random bytes, hex | Analytics only; rotating it resets unique-visitor counts |
-| `RATE_LIMIT_MAX` | no | `60` | Requests per window, default 60 |
-| `RATE_LIMIT_WINDOW_MS` | no | `60000` | Window length, default 60000 |
-| `SESSION_TTL_SECONDS` | no | `604800` | Session lifetime, default 7 days |
+| Variable               | Required | Example                                                    | Notes                                                                                                           |
+| ---------------------- | -------- | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `NODE_ENV`             | yes      | `development`                                              | One of `development`, `test`, `production`                                                                      |
+| `PORT`                 | yes      | `3000`                                                     | Integer, 1 to 65535                                                                                             |
+| `BASE_URL`             | yes      | `http://localhost:3000`                                    | Used to build `shortUrl`; no trailing slash                                                                     |
+| `DATABASE_URL`         | yes      | `postgres://postgres:postgres@localhost:5433/urlshortener` |                                                                                                                 |
+| `DATABASE_SSL`         | no       | `false`                                                    | Defaults to on in production. Separate from `NODE_ENV` so the production image can run against a local database |
+| `TRUST_PROXY_HOPS`     | yes      | `0`                                                        | `0` locally, correct hop count when deployed behind a proxy                                                     |
+| `IP_HASH_SALT`         | yes      | 32 random bytes, hex                                       | Analytics only; rotating it resets unique-visitor counts                                                        |
+| `RATE_LIMIT_MAX`       | no       | `60`                                                       | Requests per window, default 60                                                                                 |
+| `RATE_LIMIT_WINDOW_MS` | no       | `60000`                                                    | Window length, default 60000                                                                                    |
+| `SESSION_TTL_SECONDS`  | no       | `604800`                                                   | Session lifetime, default 7 days                                                                                |
 
 ## Project Structure
 
@@ -400,7 +400,7 @@ registered before the catch-all `GET /:slug`.
 
 This is not a detail. `/:slug` matches a single segment, so without an ordering
 rule it swallows `/health`, and a two-segment route such as `/api/links` is only
-safe by accident. The reserved-slug list prevents someone from *creating* a link
+safe by accident. The reserved-slug list prevents someone from _creating_ a link
 named `health`; it does nothing about which route matches an incoming request.
 
 The router therefore guarantees two things, and both are unit tested before any
@@ -520,24 +520,24 @@ export async function createLink(input: CreateLinkInput): Promise<Link> {
 
 Every status this API can return. A code not on this list is a bug.
 
-| Code | When |
-|---|---|
-| 200 | Successful read |
-| 201 | Link created |
-| 204 | Link deleted, logout succeeded |
-| 302 | Slug resolved, destination in `Location` |
-| 400 | Validation failure, including a reserved slug and a malformed cursor |
-| 401 | Missing, unknown, or expired session cookie |
-| 403 | Authenticated, but the resource belongs to another user |
-| 404 | No such slug, or no such path |
-| 405 | Path exists, method does not; includes an `Allow` header |
-| 409 | Custom slug already exists |
-| 410 | Slug exists but has expired |
-| 413 | Request body exceeds 16 KB |
-| 415 | State-changing request without `Content-Type: application/json` |
-| 429 | Rate limit exceeded; includes `Retry-After` |
-| 500 | Unexpected error; details logged, never returned |
-| 503 | Health check failed, or slug allocation exhausted; includes `Retry-After` |
+| Code | When                                                                      |
+| ---- | ------------------------------------------------------------------------- |
+| 200  | Successful read                                                           |
+| 201  | Link created                                                              |
+| 204  | Link deleted, logout succeeded                                            |
+| 302  | Slug resolved, destination in `Location`                                  |
+| 400  | Validation failure, including a reserved slug and a malformed cursor      |
+| 401  | Missing, unknown, or expired session cookie                               |
+| 403  | Authenticated, but the resource belongs to another user                   |
+| 404  | No such slug, or no such path                                             |
+| 405  | Path exists, method does not; includes an `Allow` header                  |
+| 409  | Custom slug already exists                                                |
+| 410  | Slug exists but has expired                                               |
+| 413  | Request body exceeds 16 KB                                                |
+| 415  | State-changing request without `Content-Type: application/json`           |
+| 429  | Rate limit exceeded; includes `Retry-After`                               |
+| 500  | Unexpected error; details logged, never returned                          |
+| 503  | Health check failed, or slug allocation exhausted; includes `Retry-After` |
 
 ## Cross-Cutting Requirements
 
@@ -655,8 +655,11 @@ pre-deploy command, once per deploy, before any new instance serves traffic.
 - `CMD ["node", "--env-file-if-exists=.env", "--experimental-strip-types", "src/index.ts"]`.
   The source is copied in and stripped at runtime; there is no build output,
   because this project never emits.
-- A `HEALTHCHECK` that calls `/health`, which is the entire reason that endpoint
-  checks the database rather than just returning `ok`.
+- A `HEALTHCHECK` that calls `/health/live`, which touches nothing outside the
+  process. Docker's only response to an unhealthy container is a restart, and a
+  restart does not repair an unreachable database, so probing the database from
+  here would answer a database outage with a restart loop. Readiness is a
+  different question with a different consumer, and it has `/health/ready`.
 
 **Free-tier behaviour that changes how the service behaves.** Render free
 instances spin down when idle. The first request after a spin-down pays a cold
@@ -698,7 +701,7 @@ because an unbounded wait against a hung database means the platform sends
 - **Levels:**
   - Unit tests for pure logic: slug generation and alphabet, reserved-word
     matching, expiry comparison, every parse function, cookie parsing and
-  serialising, and client IP resolution.
+    serialising, and client IP resolution.
   - Integration tests for every endpoint, exercising the full route, service,
     repository, and database path.
   - No browser or end-to-end tests. There is no frontend.
@@ -767,7 +770,9 @@ The project is complete when all of the following are demonstrably true.
 
 1. From a clean checkout, the documented first-time setup sequence, ending in
    `npm run dev`, produces a running API on `http://localhost:3000`.
-2. `GET /health` returns `200` with `{"status":"ok","database":"ok"}`.
+2. `GET /health` returns `200` with `{"status":"ok","database":"ok"}`, as does
+   `GET /health/ready`. `GET /health/live` returns `200` with `{"status":"ok"}`
+   without querying the database.
 3. `POST /api/links` with a valid URL returns `201` and a slug of 7 base62
    characters.
 4. `GET /:slug` returns `302` with the original URL in the `Location` header.
@@ -806,20 +811,20 @@ is the correct value with no proxy in front of the service.
 
 ## Risks
 
-| Risk | Impact | Mitigation |
-|---|---|---|
-| `--experimental-strip-types` is experimental in 22.15 | Warning on every run; behaviour could change | Pin the Node version in `.nvmrc` and in the Dockerfile. `tsc --noEmit` still guards types. Falling back to a `tsc` build is a contained change to two npm scripts. |
-| Hand-written router misses an edge case | Subtle routing or parsing bugs | Route matching and body reading each get direct unit tests before any module uses them. |
-| Session id guessable or leaked | Account takeover | 32 bytes from `randomBytes`, looked up in a table, revocable server-side. No signature verification exists to get wrong, which is why JWT was rejected |
-| Client IP resolved incorrectly behind a proxy | Rate limiter becomes one global bucket; unique visitors collapse to one | Single shared resolver, `TRUST_PROXY_HOPS` from config, counted from the right-hand end. A deployment success criterion verifies two clients produce two buckets |
-| Rate-limit map grows without bound | Memory exhaustion from unauthenticated traffic | Sweep expired entries on write, hard cap of 10,000 entries |
-| `scrypt` parameters raised past the default `maxmem` | `ERR_CRYPTO_INVALID_SCRYPT_PARAMS` at runtime | Cost parameters and `maxmem` specified together, and stored inside the hash string so they can change later |
-| Deploy overlaps two instances briefly | Rate limit doubles during a rollout | Accepted. The window is short and the limit is not a security control. Recorded so it is not mistaken for a bug |
-| `--env-file` on a platform with no `.env` file | Service crashes on boot before any code runs | `start` and `migrate` use `--env-file-if-exists`. Local scripts keep the strict form so setup mistakes still fail loudly |
-| Render free PostgreSQL expires after 90 days | Deployed service goes down with no code change | Expiry date recorded in the deployment notes, not discovered |
-| Migrations run at container start | A crash-looping container retries DDL indefinitely | Migrations run as a pre-deploy command, once per deploy |
-| Hand-written validation drifts per module | Inconsistent error responses | All parse functions build on shared primitives in `lib/validate.ts` and produce one error shape. |
-| No dependency means more code to own | Slower delivery | Accepted deliberately. Learning the primitives is the objective. |
+| Risk                                                  | Impact                                                                  | Mitigation                                                                                                                                                         |
+| ----------------------------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `--experimental-strip-types` is experimental in 22.15 | Warning on every run; behaviour could change                            | Pin the Node version in `.nvmrc` and in the Dockerfile. `tsc --noEmit` still guards types. Falling back to a `tsc` build is a contained change to two npm scripts. |
+| Hand-written router misses an edge case               | Subtle routing or parsing bugs                                          | Route matching and body reading each get direct unit tests before any module uses them.                                                                            |
+| Session id guessable or leaked                        | Account takeover                                                        | 32 bytes from `randomBytes`, looked up in a table, revocable server-side. No signature verification exists to get wrong, which is why JWT was rejected             |
+| Client IP resolved incorrectly behind a proxy         | Rate limiter becomes one global bucket; unique visitors collapse to one | Single shared resolver, `TRUST_PROXY_HOPS` from config, counted from the right-hand end. A deployment success criterion verifies two clients produce two buckets   |
+| Rate-limit map grows without bound                    | Memory exhaustion from unauthenticated traffic                          | Sweep expired entries on write, hard cap of 10,000 entries                                                                                                         |
+| `scrypt` parameters raised past the default `maxmem`  | `ERR_CRYPTO_INVALID_SCRYPT_PARAMS` at runtime                           | Cost parameters and `maxmem` specified together, and stored inside the hash string so they can change later                                                        |
+| Deploy overlaps two instances briefly                 | Rate limit doubles during a rollout                                     | Accepted. The window is short and the limit is not a security control. Recorded so it is not mistaken for a bug                                                    |
+| `--env-file` on a platform with no `.env` file        | Service crashes on boot before any code runs                            | `start` and `migrate` use `--env-file-if-exists`. Local scripts keep the strict form so setup mistakes still fail loudly                                           |
+| Render free PostgreSQL expires after 90 days          | Deployed service goes down with no code change                          | Expiry date recorded in the deployment notes, not discovered                                                                                                       |
+| Migrations run at container start                     | A crash-looping container retries DDL indefinitely                      | Migrations run as a pre-deploy command, once per deploy                                                                                                            |
+| Hand-written validation drifts per module             | Inconsistent error responses                                            | All parse functions build on shared primitives in `lib/validate.ts` and produce one error shape.                                                                   |
+| No dependency means more code to own                  | Slower delivery                                                         | Accepted deliberately. Learning the primitives is the objective.                                                                                                   |
 
 ## Resolved Decisions
 
@@ -861,7 +866,7 @@ leave those choices quietly wrong.
 
 It does **not** permit reading the client IP from `socket.remoteAddress`. That
 was the original wording and it was wrong. The decision removes load balancers
-*of our own*; it does nothing about the platform's. Render routes every request
+_of our own_; it does nothing about the platform's. Render routes every request
 through its own load balancers and through Cloudflare, so the socket address in
 production belongs to an edge node. Client IP resolution is specified under
 Cross-Cutting Requirements and applies regardless of this decision.
@@ -882,8 +887,11 @@ silent, which is why they are written down rather than left to be discovered.
 3. **Rolling restarts drop in-flight requests.** Graceful shutdown becomes
    mandatory: stop accepting connections, drain what is open, close the pool,
    then exit.
-4. **`/health` gains real consequences.** It stops being informational and
-   starts deciding whether an instance receives traffic.
+4. **Health checks gain real consequences.** They stop being informational and
+   start deciding whether an instance receives traffic, and whether it is
+   restarted. That is why the two questions are answered separately:
+   `/health/ready` decides rotation, `/health/live` decides restarts, and
+   conflating them turns a database outage into a restart loop.
 5. **The deployment target changes.** The Render free tier gives one instance
    and no control over balancing. Multi-instance means a VPS running Compose, or
    a paid plan.

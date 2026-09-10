@@ -1,0 +1,129 @@
+# Continuous integration.
+#
+# Runs the same four gates a developer runs locally, in the same order, so that
+# "it passed on my machine" and "it passed in CI" cannot mean different things.
+# The order is deliberate: the checks that fail in seconds run before the ones
+# that need a database, so an obvious mistake is reported in under a minute.
+#
+# Nothing here installs a linter or a compiler separately. Everything the gates
+# need is a devDependency, pinned by package-lock.json and installed by npm ci,
+# which is what keeps CI and a developer's checkout on identical versions.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A second push to the same branch makes the first run's answer irrelevant.
+# Cancelling it frees the runner and stops a stale red or green from arriving
+# after the real one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# The default token is only ever read from here. Nothing in this workflow
+# writes to the repository, and a token that cannot write cannot be turned into
+# one by a compromised dependency.
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Type check, lint, format, test
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        # The same major version docker-compose.yml runs locally. A test suite
+        # that passes against a different major than production is evidence
+        # about the wrong database.
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          # The test database, created directly rather than by the init script
+          # in docker/init. A service container takes no volume mounts, so that
+          # script cannot run here, and without this the migration step would
+          # fail with `3D000 database "urlshortener_test" does not exist`.
+          POSTGRES_DB: urlshortener_test
+        ports:
+          # 5432, not the 5433 used locally. The local mapping exists only to
+          # avoid a port already taken on a developer's machine; a fresh runner
+          # has no such conflict.
+          - 5432:5432
+        # Without this the migration step races the database's startup and
+        # fails with a connection error on a cold runner.
+        options: >-
+          --health-cmd "pg_isready -U postgres -d urlshortener_test"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Read from .nvmrc, which the Dockerfile also pins to. The runtime
+          # type-stripping flag this project depends on is experimental and
+          # version-sensitive, so a floating major would be a silent way to
+          # change the language semantics of the service.
+          node-version-file: .nvmrc
+          cache: npm
+
+      # --ignore-scripts for the same reason the Dockerfile uses it: no
+      # dependency here needs a build step, and a lifecycle script is a
+      # supply-chain foothold that costs nothing to close.
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      # .env.test is gitignored, because it is a local file that may hold real
+      # values. CI writes its own, pointing at the service container. The salt
+      # is a fixed non-secret: it only has to be stable within a run, and using
+      # a real one here would put a production secret in a public log.
+      - name: Write the test environment
+        run: |
+          cat > .env.test <<'ENV'
+          NODE_ENV=test
+          PORT=3000
+          BASE_URL=http://localhost:3000
+          DATABASE_URL=postgres://postgres:postgres@localhost:5432/urlshortener_test
+          TRUST_PROXY_HOPS=0
+          IP_HASH_SALT=00000000000000000000000000000000000000000000000000000000000000ci
+          RATE_LIMIT_MAX=100000
+          RATE_LIMIT_WINDOW_MS=60000
+          ENV
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Check formatting
+        run: npm run format:check
+
+      # `pretest` migrates the test database, so this one step covers the
+      # migration runner as well as the suite. Integration tests run against
+      # the real Postgres above; nothing is mocked.
+      - name: Test
+        run: npm test
+
+  image:
+    name: Build the production image
+    runs-on: ubuntu-latest
+
+    # The image is only worth building once the code that goes in it is known
+    # good, and a broken Dockerfile is a deploy-time failure rather than a
+    # merge-time one. Building it here moves that discovery earlier.
+    needs: verify
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Built, not pushed. Nothing in this repository publishes an image, and a
+      # workflow that could push would need credentials this one deliberately
+      # does not have.
+      - name: Build
+        run: docker build --tag url-shortener:ci .

@@ -102,6 +102,7 @@ mandatory.
    - **The drain loops until the set is empty.** A single `Promise.all` over a
      live set misses writes added while that `Promise.all` was pending. It must
      repeat until a full pass finds nothing.
+
 4. **Shutdown must drain, in the right order.** `server.close()` stops new
    connections; it does **not** wait for in-flight requests, and those requests
    keep adding writes. Draining immediately after `close()` therefore returns
@@ -112,6 +113,7 @@ mandatory.
    Every wait is bounded. An unbounded drain against a hung database means the
    platform sends `SIGKILL` and discards everything anyway, so a 5 second
    deadline with a logged timeout is strictly better than waiting forever.
+
 5. **Failures must stay visible.** A swallowed error is invisible by
    definition. Every failed click insert logs at error level with the link id
    and the database error code, so a systematic failure does not look like an
@@ -325,15 +327,15 @@ and top referrers. The count of excluded rows is returned separately as
 
 ### Table: `click_events`
 
-| Column | Type | Constraints | Notes |
-|---|---|---|---|
-| `id` | `bigint` | primary key, generated always as identity | Internal only, never exposed |
-| `link_id` | `bigint` | not null, references `links (id)` on delete cascade | |
-| `occurred_at` | `timestamptz` | not null, default `now()` | The redirect time |
-| `referrer` | `text` | nullable | The `Referer` header, absent for direct traffic |
-| `user_agent` | `text` | nullable | As sent |
-| `ip_hash` | `text` | not null | Hex `sha256` of salt then IP |
-| `is_bot` | `boolean` | not null, default `false` | |
+| Column        | Type          | Constraints                                         | Notes                                           |
+| ------------- | ------------- | --------------------------------------------------- | ----------------------------------------------- |
+| `id`          | `bigint`      | primary key, generated always as identity           | Internal only, never exposed                    |
+| `link_id`     | `bigint`      | not null, references `links (id)` on delete cascade |                                                 |
+| `occurred_at` | `timestamptz` | not null, default `now()`                           | The redirect time                               |
+| `referrer`    | `text`        | nullable                                            | The `Referer` header, absent for direct traffic |
+| `user_agent`  | `text`        | nullable                                            | As sent                                         |
+| `ip_hash`     | `text`        | not null                                            | Hex `sha256` of salt then IP                    |
+| `is_bot`      | `boolean`     | not null, default `false`                           |                                                 |
 
 Constraints and indexes:
 

@@ -105,7 +105,11 @@ describe('toClickEvent', () => {
 
   it('takes the first value of a repeated header', () => {
     const event = toClickEvent(
-      { ...base, referrer: ['https://first.example', 'https://second.example'], userAgent: undefined },
+      {
+        ...base,
+        referrer: ['https://first.example', 'https://second.example'],
+        userAgent: undefined,
+      },
       SALT,
     );
 
@@ -200,15 +204,24 @@ describe('shedding episodes', () => {
       release = resolve;
     });
 
-    assert.equal(tracker.track(() => blocked), true);
-    assert.equal(tracker.track(() => Promise.resolve()), false);
+    assert.equal(
+      tracker.track(() => blocked),
+      true,
+    );
+    assert.equal(
+      tracker.track(() => Promise.resolve()),
+      false,
+    );
 
     release();
     await tracker.drain();
 
     // The episode state lives in the tracker's closure rather than in module
     // globals, so it cannot be left set by one caller and read by another.
-    assert.equal(tracker.track(() => Promise.resolve()), true);
+    assert.equal(
+      tracker.track(() => Promise.resolve()),
+      true,
+    );
     await tracker.drain();
   });
 });
