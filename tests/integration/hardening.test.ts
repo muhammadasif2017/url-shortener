@@ -171,9 +171,12 @@ describe('per-account sign-in throttle', () => {
 
       assert.equal(await login(instance, account.email, 'the wrong passphrase'), 429);
 
-      // The correct password is refused too, which is the cost of the control
-      // and the reason the window is short and the budget generous.
-      assert.equal(await login(instance, account.email, PASSWORD), 429);
+      // The owner still gets in. The budget is spent by whoever is guessing, so
+      // refusing the correct password once it is gone made this a lockout anyone
+      // who knew the address could trigger with twenty requests and hold for the
+      // window. Verification runs before the budget is consulted, so a spent
+      // budget refuses further guesses without refusing the account's owner.
+      assert.equal(await login(instance, account.email, PASSWORD), 200);
     } finally {
       await instance.close();
     }

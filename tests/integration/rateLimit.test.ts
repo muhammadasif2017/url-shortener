@@ -115,6 +115,44 @@ describe('rate limiting', () => {
     }
   });
 
+  it('applies the credential limit to every spelling the router accepts', async () => {
+    // The router drops empty path segments, so all three spellings below reach
+    // the sign-in handler and all three run scrypt. The limiter used to compare
+    // the raw path against an exact-string set, so only the first was recognised
+    // as a credential endpoint and the other two fell through to the general API
+    // limit. Both decisions now come from the same normalised path.
+    const aliases = ['/api/auth/login', '/api/auth/login/', '/api//auth/login'];
+
+    for (const alias of aliases) {
+      const strict = await startTestServer(identityRoutes, {
+        rateLimit: { max: 1000, windowMs: 60_000 },
+        authRateLimit: { max: 3, windowMs: 60_000 },
+      });
+
+      try {
+        let refused: Response | undefined;
+
+        for (let attempt = 0; attempt < 4; attempt += 1) {
+          const response = await strict.fetch(alias, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ email: 'nobody@example.com', password: 'wrong passphrase' }),
+          });
+
+          if (response.status === 429) {
+            refused = response;
+            break;
+          }
+          await response.body?.cancel();
+        }
+
+        assert.ok(refused, `expected ${alias} to be refused by the credential limit`);
+      } finally {
+        await strict.close();
+      }
+    }
+  });
+
   it('leaves the health check reachable while the API is limited', async () => {
     // A rate-limited health check reports the service as unhealthy under the
     // platform's own monitoring, which polls far more often than any human.

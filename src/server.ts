@@ -12,7 +12,7 @@ import { createRateLimiter } from './http/rateLimit.ts';
 import { checkSharedLimit } from './http/sharedRateLimit.ts';
 import { readJsonBody } from './http/readBody.ts';
 import { json, send } from './http/respond.ts';
-import { createRouter } from './http/router.ts';
+import { createRouter, normalisePath } from './http/router.ts';
 import { AppError } from './lib/AppError.ts';
 import { resolveClientIp } from './lib/clientIp.ts';
 import { describeError, log } from './lib/logger.ts';
@@ -42,6 +42,9 @@ const AUTH_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
  *
  * Sign-out and the current-user route are absent: neither hashes anything, and
  * rate limiting sign-out would leave someone unable to end their own session.
+ *
+ * Membership is an exact-string test, so it is only sound against a path the
+ * router would match on. `normalisePath` produces that; `url.pathname` does not.
  */
 const CREDENTIAL_PATHS: ReadonlySet<string> = new Set(['/api/auth/login', '/api/auth/register']);
 
@@ -320,7 +323,13 @@ export function createAppServer(
     // writes carries an id, including the ones no handler ever sees.
     const requestId = resolveRequestId(request.headers['x-request-id']);
 
-    const match = router.match(method, url.pathname);
+    // Every per-path decision below reads this, not `url.pathname`. Routing and
+    // rate limiting have to agree on what path a request is on, and they only
+    // agree if one function decides it. Logs and error bodies keep the raw path,
+    // because the spelling a caller actually sent is what an operator needs.
+    const path = normalisePath(url.pathname);
+
+    const match = router.match(method, path);
 
     if (match.type === 'not-found') {
       send(response, notFoundResponse(), method, requestId);
@@ -343,7 +352,7 @@ export function createAppServer(
       config.trustProxyHops,
     );
 
-    const limited = await applyRateLimit(url.pathname, clientIp);
+    const limited = await applyRateLimit(path, clientIp);
     if (limited !== undefined) {
       send(
         response,

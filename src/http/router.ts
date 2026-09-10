@@ -82,6 +82,26 @@ function splitPath(path: string): string[] {
 }
 
 /**
+ * Rewrites a request path into the single form the router matches on.
+ *
+ * Matching drops empty segments, so `/api/auth/login`, `/api/auth/login/` and
+ * `/api//auth/login` are one route. Anything else that decides something per
+ * path has to agree with that, and comparing the raw path instead is not a
+ * near-miss: the rate limiter classified credential endpoints by exact string,
+ * so an alias spelling reached the sign-in handler while missing the strict
+ * limit and falling through to the general one, sixty per minute instead of ten
+ * per fifteen. Two independent normalisations drift, and this one already had.
+ * Callers derive their path from here so there is only one to drift from.
+ *
+ * @param path - A raw request path, with or without a query string.
+ * @returns The path in matching form, always rooted and never with an empty
+ *   segment. The root path stays `/`.
+ */
+export function normalisePath(path: string): string {
+  return `/${splitPath(stripQuery(path)).join('/')}`;
+}
+
+/**
  * Orders two routes by specificity, most specific first.
  *
  * Compares segment by segment. At the first position where one route has a
