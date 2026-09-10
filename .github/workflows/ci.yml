@@ -61,9 +61,9 @@ jobs:
           --health-retries 15
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           # Read from .nvmrc, which the Dockerfile also pins to. The runtime
           # type-stripping flag this project depends on is experimental and
@@ -130,7 +130,7 @@ jobs:
     needs: verify
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Built, not pushed. Nothing in this repository publishes an image, and a
       # workflow that could push would need credentials this one deliberately
