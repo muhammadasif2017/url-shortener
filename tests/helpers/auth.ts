@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 
 import { pool } from '../../src/db/pool.ts';
+import { drainPendingWrites } from '../../src/modules/analytics/analytics.service.ts';
 import type { TestServer } from './server.ts';
 
 /**
@@ -19,8 +20,17 @@ export type TestAccount = {
   readonly userId: string;
 };
 
-/** Empties users and sessions. Links cascade from users, so this clears those too. */
+/**
+ * Empties users and sessions. Links cascade from users, so this clears those too.
+ *
+ * Drains pending click writes first. Without that, a write still in flight from
+ * an earlier redirect holds a lock this statement needs while waiting for one
+ * this statement holds, and PostgreSQL breaks the cycle with `40P01 deadlock
+ * detected`. See `resetDatabase` in `db.ts`, which is what a file clearing more
+ * than one table should call instead.
+ */
 export async function truncateUsers(): Promise<void> {
+  await drainPendingWrites();
   await pool().query('truncate table users restart identity cascade');
 }
 

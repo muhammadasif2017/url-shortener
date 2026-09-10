@@ -6,8 +6,8 @@ import { analyticsRoutes } from '../../src/modules/analytics/analytics.routes.ts
 import { drainPendingWrites } from '../../src/modules/analytics/analytics.service.ts';
 import { identityRoutes } from '../../src/modules/identity/identity.routes.ts';
 import { linkRoutes } from '../../src/modules/links/links.routes.ts';
-import { authHeaders, registerAccount, truncateUsers, type TestAccount } from '../helpers/auth.ts';
-import { insertLink, truncateLinks } from '../helpers/db.ts';
+import { authHeaders, registerAccount, type TestAccount } from '../helpers/auth.ts';
+import { insertLink, resetDatabase } from '../helpers/db.ts';
 import { startTestServer, type TestServer } from '../helpers/server.ts';
 
 /**
@@ -38,8 +38,7 @@ before(async () => {
 });
 
 beforeEach(async () => {
-  await truncateUsers();
-  await truncateLinks();
+  await resetDatabase();
   account = await registerAccount(server);
 });
 

@@ -7,8 +7,8 @@ import { hashSessionId } from '../../src/lib/sessionId.ts';
 import { sweepExpiredClicks } from '../../src/modules/analytics/analytics.retention.ts';
 import { ACCOUNT_FAILURE_MAX, identityRoutes } from '../../src/modules/identity/identity.routes.ts';
 import { linkRoutes } from '../../src/modules/links/links.routes.ts';
-import { registerAccount, truncateUsers } from '../helpers/auth.ts';
-import { insertLink, truncateLinks } from '../helpers/db.ts';
+import { registerAccount } from '../helpers/auth.ts';
+import { insertLink, resetDatabase } from '../helpers/db.ts';
 import { startTestServer, type TestServer } from '../helpers/server.ts';
 
 /**
@@ -28,9 +28,7 @@ before(async () => {
 });
 
 beforeEach(async () => {
-  await truncateUsers();
-  await truncateLinks();
-  await pool().query('truncate table rate_limit_windows');
+  await resetDatabase();
 });
 
 after(async () => {
