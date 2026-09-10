@@ -87,14 +87,14 @@ Two limiters, and which one applies is decided by the path:
   the limit is global across instances. Credential paths get a far stricter
   window. If the counter cannot be read, the request is refused with `503`: the
   limiter fails closed.
+- The health endpoints are exempt from both, and checked first.
 - Everything else goes to `src/http/rateLimit.ts`, a counter in process memory,
   at 600 per minute per address.
 
-The test is literally `pathname.startsWith('/api/')`, so "everything else" is the
-redirect path **and the health endpoints**. That is worth knowing before you
-point a monitor at one: a health poll spends from the same per-address bucket as
-redirects from that address. At one poll every thirty seconds it is
-irrelevant; at one per second from the same address as real traffic it is not.
+The health exemption is a boundary match, not a prefix: `/health` and anything
+under `/health/`, but never `/healthy`, which is one segment and therefore a
+slug. Without that boundary, anyone could mint themselves an unmetered route by
+choosing the right slug.
 
 The split between the two limiters is a decision, not an unfinished migration.
 [ADR 0007](adr/0007-shared-rate-limit-counter-in-postgres.md) explains it.

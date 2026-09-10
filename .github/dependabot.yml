@@ -1,0 +1,49 @@
+# Dependency updates.
+#
+# This repository ships one production dependency and six development ones, and
+# the development ones pull in roughly a hundred transitive packages. That tail
+# is the part nobody reads, and it is where a known vulnerability sits unnoticed
+# for months. Dependabot is what turns "nobody looked" into a pull request.
+#
+# Every update arrives as a pull request, so it runs the same CI as any other
+# change: type check, lint, format, the full suite against a real database, and
+# an image build. An update that breaks something is caught before merge rather
+# than at the next deploy.
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      # Weekly, not daily. Daily on a project this size is noise that trains you
+      # to ignore the notifications, which is worse than no notifications.
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    # Group the routine ones into a single pull request. Ten separate patch
+    # bumps are ten CI runs and ten reviews for one decision.
+    groups:
+      development-dependencies:
+        dependency-type: development
+        update-types:
+          - minor
+          - patch
+    # `pg` is the one thing running in production. Its updates arrive
+    # individually, so a major version is never merged as part of a batch.
+    ignore:
+      - dependency-name: '@types/node'
+        # Pinned to the Node major this project runs on. A types package that
+        # jumps ahead of the runtime describes APIs that are not there.
+        update-types:
+          - version-update:semver-major
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      actions:
+        patterns:
+          - '*'

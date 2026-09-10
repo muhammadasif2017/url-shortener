@@ -125,4 +125,63 @@ describe('rate limiting', () => {
 
     assert.equal((await server.fetch('/health')).status, 200);
   });
+
+  it('leaves every health path reachable once the redirect limit is exhausted', async () => {
+    // The test above only ever proved health was in a different bucket from the
+    // API. It was in the redirect path's bucket, which is the failure this test
+    // exists for: a monitor and real redirect traffic arriving from one address,
+    // as a NAT or a single-address proxy produces, spent from the same counter
+    // and either could starve the other.
+    const tiny = await startTestServer(linkRoutes, {
+      rateLimit: { max: 1000, windowMs: 60_000 },
+      redirectRateLimit: { max: 2, windowMs: 60_000 },
+    });
+
+    try {
+      await insertLink({ slug: 'metered', url: 'https://example.com/ok' });
+
+      let refused: Response | undefined;
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        const response = await tiny.fetch('/metered');
+        if (response.status === 429) {
+          refused = response;
+          break;
+        }
+        await response.body?.cancel();
+      }
+
+      assert.ok(refused, 'expected the redirect limit to refuse within five requests');
+
+      // The limiter is now exhausted for this address. Every health path must
+      // still answer.
+      for (const path of ['/health', '/health/live', '/health/ready']) {
+        const response = await tiny.fetch(path);
+        assert.equal(response.status, 200, `${path} was rate limited`);
+      }
+    } finally {
+      await tiny.close();
+    }
+  });
+
+  it('still meters a slug that merely looks like a health path', async () => {
+    // `/healthy` is one segment, so it is a slug and belongs to the redirect
+    // path. An exemption written as a prefix match without the boundary would
+    // hand anyone an unmetered route by choosing the right slug.
+    const tiny = await startTestServer(linkRoutes, {
+      rateLimit: { max: 1000, windowMs: 60_000 },
+      redirectRateLimit: { max: 1, windowMs: 60_000 },
+    });
+
+    try {
+      await insertLink({ slug: 'healthy', url: 'https://example.com/ok' });
+
+      const first = await tiny.fetch('/healthy');
+      assert.equal(first.status, 302);
+
+      const second = await tiny.fetch('/healthy');
+      assert.equal(second.status, 429);
+    } finally {
+      await tiny.close();
+    }
+  });
 });
