@@ -15,14 +15,14 @@ is recorded here and in the README rather than left for a client to discover.
 Data crosses into the service at six points. Everything on the untrusted side of each
 boundary is attacker-controlled, regardless of how ordinary it looks.
 
-| # | Boundary | Untrusted input | Entry point |
-|---|---|---|---|
-| B1 | Public HTTP request line | Method, path, query string, slug segment | `src/server.ts` |
-| B2 | Request headers | `Cookie`, `X-Forwarded-For`, `Referer`, `User-Agent`, `Content-Type`, `Content-Length` | `src/server.ts`, `src/http/auth.ts` |
-| B3 | Request body | Registration and login credentials, link creation payload | `src/http/readBody.ts` |
-| B4 | Stored destination URL, replayed outward | The `Location` header of every redirect | `src/modules/links/links.routes.ts` |
-| B5 | Database connection | Rows returned by PostgreSQL, and the TLS session carrying them | `src/db/pool.ts` |
-| B6 | Process environment | Every setting, including the IP hash salt and the proxy hop count | `src/config/env.ts` |
+| #   | Boundary                                 | Untrusted input                                                                        | Entry point                         |
+| --- | ---------------------------------------- | -------------------------------------------------------------------------------------- | ----------------------------------- |
+| B1  | Public HTTP request line                 | Method, path, query string, slug segment                                               | `src/server.ts`                     |
+| B2  | Request headers                          | `Cookie`, `X-Forwarded-For`, `Referer`, `User-Agent`, `Content-Type`, `Content-Length` | `src/server.ts`, `src/http/auth.ts` |
+| B3  | Request body                             | Registration and login credentials, link creation payload                              | `src/http/readBody.ts`              |
+| B4  | Stored destination URL, replayed outward | The `Location` header of every redirect                                                | `src/modules/links/links.routes.ts` |
+| B5  | Database connection                      | Rows returned by PostgreSQL, and the TLS session carrying them                         | `src/db/pool.ts`                    |
+| B6  | Process environment                      | Every setting, including the IP hash salt and the proxy hop count                      | `src/config/env.ts`                 |
 
 Note on B4: the service stores an attacker-supplied URL and later emits it into a response
 header for a different victim. The destination is untrusted on the way in and untrusted on
@@ -145,7 +145,7 @@ right trade and is argued in `isSharedRateLimited`.
 The same limiter could also be made to forget a victim on demand. When a key was new or
 its window had expired, `check` swept expired entries and then, if the map was still at
 capacity, deleted `windows.keys().next()`. A `Map` iterates in insertion order, so that
-evicted the oldest *inserted* entry rather than the oldest *expiring* one. `server.ts`
+evicted the oldest _inserted_ entry rather than the oldest _expiring_ one. `server.ts`
 passes no `maxEntries`, so both limiters sit at the ten-thousand default. An attacker
 sending roughly ten thousand requests from distinct source addresses to `/api/auth/login`
 evicted the window belonging to an account under attack, and the victim's next attempt took
@@ -238,21 +238,21 @@ database, and rotating it on a schedule, is what limits the damage.
 
 ## 5. Findings, ranked
 
-| # | Severity | Finding | Location |
-|---|---|---|---|
-| 1 | High | ~~Database TLS does not verify the server certificate~~ **Fixed.** `rejectUnauthorized` is now true, with the provider bundle read from `DATABASE_CA_CERT` | `src/db/pool.ts` |
-| 2 | High | ~~Rate limiter is process-local, so limits multiply by instance count~~ **Fixed.** API counters live in `rate_limit_windows` and are shared by every instance | `src/http/sharedRateLimit.ts` |
-| 2b | High | ~~Limiter evicts by insertion order, so a flood clears a victim's credential window~~ **Fixed.** Keys at the limit are protected, and the credential paths no longer use this limiter at all | `src/http/rateLimit.ts` |
-| 3 | High | ~~Anonymous link creation with no destination reputation control~~ **Fixed.** Creating a link requires a session, so every link has an owner | `src/modules/links/links.routes.ts` |
-| 4 | Medium | ~~Redirect route is unmetered and writes to the database per request~~ **Fixed.** 600 redirects per minute per address, counted in process | `src/server.ts` |
-| 5 | Medium | ~~Session identifiers stored in plaintext in the database~~ **Fixed.** The table holds a SHA-256 digest; the identifier exists only in the cookie | `src/lib/sessionId.ts` |
-| 6 | Medium | ~~Destination URL is persisted unnormalized, from the raw input string~~ **Fixed.** `parseDestinationUrl` returns `parsed.href`, and the length cap is applied to it | `src/lib/validate.ts` |
-| 7 | Medium | ~~No per-account throttle or lockout, only per-address~~ **Fixed.** 20 failed sign-ins per account per hour, counting failures only | `src/modules/identity/identity.routes.ts` |
-| 8 | Medium | ~~Click history has no retention limit and no deletion path~~ **Fixed.** `CLICK_RETENTION_DAYS`, swept daily, default 90 | `src/modules/analytics/analytics.retention.ts` |
-| 9 | Low | ~~Registration discloses whether an address is already registered~~ **Fixed.** Register always answers 202 with one body and no session | `src/modules/identity/identity.routes.ts` |
-| 10 | Low | ~~No HSTS or `Referrer-Policy`, and no cache directive on authenticated JSON~~ **Fixed.** All three, plus `X-Frame-Options`; HSTS in production only | `src/http/respond.ts` |
-| 11 | Low | ~~No audit log for authentication or deletion events~~ **Fixed.** Registration, sign-in, sign-out, throttling, link creation and deletion | `src/lib/audit.ts` |
-| 12 | Low | ~~`GET /api/links/:slug` exposes link metadata without a session~~ **Fixed.** Owner only, 403 for anyone else, matching deletion | `src/modules/links/links.service.ts` |
+| #   | Severity | Finding                                                                                                                                                                                      | Location                                       |
+| --- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| 1   | High     | ~~Database TLS does not verify the server certificate~~ **Fixed.** `rejectUnauthorized` is now true, with the provider bundle read from `DATABASE_CA_CERT`                                   | `src/db/pool.ts`                               |
+| 2   | High     | ~~Rate limiter is process-local, so limits multiply by instance count~~ **Fixed.** API counters live in `rate_limit_windows` and are shared by every instance                                | `src/http/sharedRateLimit.ts`                  |
+| 2b  | High     | ~~Limiter evicts by insertion order, so a flood clears a victim's credential window~~ **Fixed.** Keys at the limit are protected, and the credential paths no longer use this limiter at all | `src/http/rateLimit.ts`                        |
+| 3   | High     | ~~Anonymous link creation with no destination reputation control~~ **Fixed.** Creating a link requires a session, so every link has an owner                                                 | `src/modules/links/links.routes.ts`            |
+| 4   | Medium   | ~~Redirect route is unmetered and writes to the database per request~~ **Fixed.** 600 redirects per minute per address, counted in process                                                   | `src/server.ts`                                |
+| 5   | Medium   | ~~Session identifiers stored in plaintext in the database~~ **Fixed.** The table holds a SHA-256 digest; the identifier exists only in the cookie                                            | `src/lib/sessionId.ts`                         |
+| 6   | Medium   | ~~Destination URL is persisted unnormalized, from the raw input string~~ **Fixed.** `parseDestinationUrl` returns `parsed.href`, and the length cap is applied to it                         | `src/lib/validate.ts`                          |
+| 7   | Medium   | ~~No per-account throttle or lockout, only per-address~~ **Fixed.** 20 failed sign-ins per account per hour, counting failures only                                                          | `src/modules/identity/identity.routes.ts`      |
+| 8   | Medium   | ~~Click history has no retention limit and no deletion path~~ **Fixed.** `CLICK_RETENTION_DAYS`, swept daily, default 90                                                                     | `src/modules/analytics/analytics.retention.ts` |
+| 9   | Low      | ~~Registration discloses whether an address is already registered~~ **Fixed.** Register always answers 202 with one body and no session                                                      | `src/modules/identity/identity.routes.ts`      |
+| 10  | Low      | ~~No HSTS or `Referrer-Policy`, and no cache directive on authenticated JSON~~ **Fixed.** All three, plus `X-Frame-Options`; HSTS in production only                                         | `src/http/respond.ts`                          |
+| 11  | Low      | ~~No audit log for authentication or deletion events~~ **Fixed.** Registration, sign-in, sign-out, throttling, link creation and deletion                                                    | `src/lib/audit.ts`                             |
+| 12  | Low      | ~~`GET /api/links/:slug` exposes link metadata without a session~~ **Fixed.** Owner only, 403 for anyone else, matching deletion                                                             | `src/modules/links/links.service.ts`           |
 
 ## 6. What is already right
 
@@ -307,7 +307,7 @@ patches:
   order to protect it would be self-defeating. A per-instance cap still bounds the total.
 - **Link creation requires a session (finding 3).** Every link now has an owner, so abuse
   is attributable. This is the change that alters the public API: an anonymous `POST
-  /api/links` is a 401.
+/api/links` is a 401.
 - **Session identifiers are hashed at rest (finding 5).** Unsalted SHA-256, because the
   input is already 256 bits of randomness and there is nothing for a salt or a work factor
   to defend. The migration deletes every live session, so a deploy signs everyone out once.

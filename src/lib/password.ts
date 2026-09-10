@@ -80,12 +80,12 @@ export const MAX_PASSWORD_LENGTH = 128;
 export async function hashPassword(password: string): Promise<string> {
   const salt = randomBytes(SALT_LENGTH);
 
-  const derived = (await scryptAsync(password, salt, KEY_LENGTH, {
+  const derived = await scryptAsync(password, salt, KEY_LENGTH, {
     N,
     r: R,
     p: P,
     maxmem: MAX_MEM,
-  })) as Buffer;
+  });
 
   return [
     'scrypt',
@@ -112,12 +112,12 @@ export async function verifyPassword(password: string, stored: string): Promise<
 
   let derived: Buffer;
   try {
-    derived = (await scryptAsync(password, parsed.salt, parsed.hash.byteLength, {
+    derived = await scryptAsync(password, parsed.salt, parsed.hash.byteLength, {
       N: parsed.n,
       r: parsed.r,
       p: parsed.p,
       maxmem: MAX_MEM,
-    })) as Buffer;
+    });
   } catch {
     // Parameters outside what this build allows, for instance a hash written by
     // a future version with a higher cost. A failed verification is the right

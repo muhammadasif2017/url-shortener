@@ -89,10 +89,11 @@ describe('click recording', () => {
     await drainPendingWrites();
 
     const [row] = await clicksFor(link.id);
-    assert.equal(row?.referrer, 'https://news.example.com/story');
-    assert.equal(row?.user_agent, 'Mozilla/5.0 (X11; Linux x86_64) Firefox/141.0');
-    assert.match(row?.ip_hash ?? '', /^[0-9a-f]{64}$/);
-    assert.equal(row?.is_bot, false);
+    assert.ok(row, 'expected exactly one click row');
+    assert.equal(row.referrer, 'https://news.example.com/story');
+    assert.equal(row.user_agent, 'Mozilla/5.0 (X11; Linux x86_64) Firefox/141.0');
+    assert.match(row.ip_hash, /^[0-9a-f]{64}$/);
+    assert.equal(row.is_bot, false);
   });
 
   it('never stores the raw address', async () => {
@@ -102,7 +103,8 @@ describe('click recording', () => {
     await drainPendingWrites();
 
     const [row] = await clicksFor(link.id);
-    assert.ok(!(row?.ip_hash ?? '').includes('127.0.0.1'));
+    assert.ok(row, 'expected exactly one click row');
+    assert.ok(!row.ip_hash.includes('127.0.0.1'));
   });
 
   it('stores a missing referrer as null, which is what direct traffic is', async () => {
@@ -112,7 +114,8 @@ describe('click recording', () => {
     await drainPendingWrites();
 
     const [row] = await clicksFor(link.id);
-    assert.equal(row?.referrer, null);
+    assert.ok(row, 'expected exactly one click row');
+    assert.equal(row.referrer, null);
   });
 
   it('flags an announced bot and keeps the row', async () => {
@@ -122,7 +125,8 @@ describe('click recording', () => {
     await drainPendingWrites();
 
     const [row] = await clicksFor(link.id);
-    assert.equal(row?.is_bot, true);
+    assert.ok(row, 'expected exactly one click row');
+    assert.equal(row.is_bot, true);
   });
 
   it('truncates an over-length referrer instead of losing the click', async () => {

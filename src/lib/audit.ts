@@ -36,6 +36,14 @@ export type AuditFields = {
   readonly slug?: string;
   /** The client address. Hashed before it is written; never logged raw. */
   readonly clientIp?: string;
+  /**
+   * Correlation id of the request that caused the event.
+   *
+   * This is what joins an audit line to the request log around it, which is the
+   * question actually asked when reconstructing a compromise: not only that a
+   * link was deleted, but what else that same call did.
+   */
+  readonly requestId?: string;
 };
 
 /**

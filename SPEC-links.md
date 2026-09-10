@@ -35,13 +35,13 @@ Out of scope for this module:
 
 ### Table: `links`
 
-| Column | Type | Constraints | Notes |
-|---|---|---|---|
-| `id` | `bigint` | primary key, generated always as identity | Internal only, never exposed |
-| `slug` | `text` | not null, unique | The public identifier |
-| `url` | `text` | not null | The destination |
-| `expires_at` | `timestamptz` | nullable | Null means the link never expires |
-| `created_at` | `timestamptz` | not null, default `now()` | |
+| Column       | Type          | Constraints                               | Notes                             |
+| ------------ | ------------- | ----------------------------------------- | --------------------------------- |
+| `id`         | `bigint`      | primary key, generated always as identity | Internal only, never exposed      |
+| `slug`       | `text`        | not null, unique                          | The public identifier             |
+| `url`        | `text`        | not null                                  | The destination                   |
+| `expires_at` | `timestamptz` | nullable                                  | Null means the link never expires |
+| `created_at` | `timestamptz` | not null, default `now()`                 |                                   |
 
 Constraints and indexes:
 
@@ -163,14 +163,14 @@ is correct in both local and deployed environments.
 
 Failures:
 
-| Status | Code | Cause |
-|---|---|---|
-| 400 | `VALIDATION_FAILED` | Missing or malformed field, bad protocol, expiry in the past |
-| 409 | `SLUG_TAKEN` | The custom slug already exists |
-| 400 | `SLUG_RESERVED` | The custom slug is on the reserved list |
-| 413 | `BODY_TOO_LARGE` | Request body exceeds 16 KB |
-| 429 | `RATE_LIMITED` | Rate limit exceeded; carries `Retry-After` |
-| 503 | `SLUG_EXHAUSTED` | Five generated slugs collided in a row; carries `Retry-After` |
+| Status | Code                | Cause                                                         |
+| ------ | ------------------- | ------------------------------------------------------------- |
+| 400    | `VALIDATION_FAILED` | Missing or malformed field, bad protocol, expiry in the past  |
+| 409    | `SLUG_TAKEN`        | The custom slug already exists                                |
+| 400    | `SLUG_RESERVED`     | The custom slug is on the reserved list                       |
+| 413    | `BODY_TOO_LARGE`    | Request body exceeds 16 KB                                    |
+| 429    | `RATE_LIMITED`      | Rate limit exceeded; carries `Retry-After`                    |
+| 503    | `SLUG_EXHAUSTED`    | Five generated slugs collided in a row; carries `Retry-After` |
 
 ### `GET /:slug`
 
@@ -225,7 +225,14 @@ Response `200`:
 
 ```json
 {
-  "data": [ { "slug": "aB3xK9p", "url": "https://example.com", "expiresAt": null, "createdAt": "2026-09-09T10:00:00.000Z" } ],
+  "data": [
+    {
+      "slug": "aB3xK9p",
+      "url": "https://example.com",
+      "expiresAt": null,
+      "createdAt": "2026-09-09T10:00:00.000Z"
+    }
+  ],
   "nextCursor": "MTcyNTg3ODQwMDAwMHwxMjM"
 }
 ```
@@ -310,9 +317,7 @@ Every failure uses one shape:
   "error": {
     "code": "VALIDATION_FAILED",
     "message": "Request body is invalid.",
-    "details": [
-      { "field": "url", "message": "Must be an http or https URL." }
-    ]
+    "details": [{ "field": "url", "message": "Must be an http or https URL." }]
   }
 }
 ```

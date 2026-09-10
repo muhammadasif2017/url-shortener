@@ -5,13 +5,10 @@ import { after, before, beforeEach, describe, it } from 'node:test';
 import { closePool, pool } from '../../src/db/pool.ts';
 import { hashSessionId } from '../../src/lib/sessionId.ts';
 import { sweepExpiredClicks } from '../../src/modules/analytics/analytics.retention.ts';
-import {
-  ACCOUNT_FAILURE_MAX,
-  identityRoutes,
-} from '../../src/modules/identity/identity.routes.ts';
+import { ACCOUNT_FAILURE_MAX, identityRoutes } from '../../src/modules/identity/identity.routes.ts';
 import { linkRoutes } from '../../src/modules/links/links.routes.ts';
-import { registerAccount, truncateUsers } from '../helpers/auth.ts';
-import { insertLink, truncateLinks } from '../helpers/db.ts';
+import { registerAccount } from '../helpers/auth.ts';
+import { insertLink, resetDatabase } from '../helpers/db.ts';
 import { startTestServer, type TestServer } from '../helpers/server.ts';
 
 /**
@@ -31,9 +28,7 @@ before(async () => {
 });
 
 beforeEach(async () => {
-  await truncateUsers();
-  await truncateLinks();
-  await pool().query('truncate table rate_limit_windows');
+  await resetDatabase();
 });
 
 after(async () => {
@@ -55,7 +50,7 @@ describe('session storage', () => {
     const stored = rows.rows[0]?.id;
     assert.equal(stored, hashSessionId(sessionId));
     assert.notEqual(stored, sessionId);
-    assert.match(stored ?? '', /^[0-9a-f]{64}$/);
+    assert.match(stored, /^[0-9a-f]{64}$/);
   });
 
   it('still authenticates with the cookie it issued', async () => {
@@ -150,11 +145,7 @@ describe('per-account sign-in throttle', () => {
    * @param password - Password to send.
    * @returns The response status, with the body drained.
    */
-  async function login(
-    instance: TestServer,
-    email: string,
-    password: string,
-  ): Promise<number> {
+  async function login(instance: TestServer, email: string, password: string): Promise<number> {
     const response = await instance.fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -216,10 +207,7 @@ describe('response headers', () => {
     const response = await server.fetch(`/${link.slug}`);
 
     assert.equal(response.status, 302);
-    assert.equal(
-      response.headers.get('referrer-policy'),
-      'strict-origin-when-cross-origin',
-    );
+    assert.equal(response.headers.get('referrer-policy'), 'strict-origin-when-cross-origin');
   });
 
   it('marks authenticated JSON as uncacheable', async () => {

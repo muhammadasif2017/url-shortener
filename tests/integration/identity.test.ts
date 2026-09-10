@@ -3,7 +3,8 @@ import { after, before, beforeEach, describe, it } from 'node:test';
 
 import { closePool } from '../../src/db/pool.ts';
 import { identityRoutes } from '../../src/modules/identity/identity.routes.ts';
-import { registerAccount, truncateUsers } from '../helpers/auth.ts';
+import { registerAccount } from '../helpers/auth.ts';
+import { resetDatabase } from '../helpers/db.ts';
 import { startTestServer, type TestServer } from '../helpers/server.ts';
 
 /** Accounts and sessions, over real HTTP against a real database. */
@@ -21,7 +22,7 @@ before(async () => {
 });
 
 beforeEach(async () => {
-  await truncateUsers();
+  await resetDatabase();
 });
 
 after(async () => {

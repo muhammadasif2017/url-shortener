@@ -19,11 +19,7 @@ import { closePool, pool } from '../src/db/pool.ts';
  *    once do not both apply the same file.
  */
 
-const MIGRATIONS_DIR = path.join(
-  path.dirname(fileURLToPath(import.meta.url)),
-  '..',
-  'migrations',
-);
+const MIGRATIONS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'migrations');
 
 /**
  * Lock key for `pg_advisory_lock`. Arbitrary but fixed: any two runners using

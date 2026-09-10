@@ -60,6 +60,14 @@ export type RequestContext = {
    */
   readonly rateLimitNamespace: string;
   /**
+   * Correlation id for this request, resolved once at the top of the pipeline.
+   *
+   * Present on every request, echoed to the caller, and carried on the log and
+   * audit lines a handler writes. See `lib/requestId.ts` for why it is passed
+   * rather than held in ambient context.
+   */
+  readonly requestId: string;
+  /**
    * Parsed JSON request body, or `undefined` for a request that carries none.
    * Untrusted and of unknown shape: every handler validates before use.
    */
@@ -72,9 +80,7 @@ export type RequestContext = {
  * May be synchronous or asynchronous. Throwing is the normal way to signal a
  * failure; the error handler converts it into a response.
  */
-export type RouteHandler = (
-  context: RequestContext,
-) => RouteResponse | Promise<RouteResponse>;
+export type RouteHandler = (context: RequestContext) => RouteResponse | Promise<RouteResponse>;
 
 /** One route: a method, a path pattern, and the handler that serves it. */
 export type Route = {

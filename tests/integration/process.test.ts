@@ -31,7 +31,11 @@ async function freePort(): Promise<number> {
   const probe = createServer();
   await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve));
   const { port } = probe.address() as AddressInfo;
-  await new Promise<void>((resolve) => probe.close(() => resolve()));
+  await new Promise<void>((resolve) =>
+    probe.close(() => {
+      resolve();
+    }),
+  );
   return port;
 }
 
@@ -51,20 +55,16 @@ type Child = {
 async function startChild(env: Record<string, string>): Promise<Child> {
   const port = await freePort();
 
-  const child = spawn(
-    process.execPath,
-    ['--experimental-strip-types', 'src/index.ts'],
-    {
-      cwd: ROOT,
-      env: {
-        ...process.env,
-        PORT: String(port),
-        BASE_URL: `http://127.0.0.1:${port}`,
-        ...env,
-      },
-      stdio: ['ignore', 'pipe', 'pipe'],
+  const child = spawn(process.execPath, ['--experimental-strip-types', 'src/index.ts'], {
+    cwd: ROOT,
+    env: {
+      ...process.env,
+      PORT: String(port),
+      BASE_URL: `http://127.0.0.1:${port}`,
+      ...env,
     },
-  );
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
 
   const url = `http://127.0.0.1:${port}`;
 
@@ -90,7 +90,9 @@ async function startChild(env: Record<string, string>): Promise<Child> {
     process: child,
     stop: () =>
       new Promise<void>((resolve) => {
-        child.once('exit', () => resolve());
+        child.once('exit', () => {
+          resolve();
+        });
         child.kill();
       }),
   };
@@ -187,22 +189,18 @@ describe('link administration requires authentication', () => {
 
 describe('startup refuses an unsafe configuration', () => {
   it('will not start with a missing required variable', async () => {
-    const child = spawn(
-      process.execPath,
-      ['--experimental-strip-types', 'src/index.ts'],
-      {
-        cwd: ROOT,
-        env: {
-          PATH: process.env['PATH'] ?? '',
-          NODE_ENV: 'development',
-          // Everything else deliberately absent.
-        },
-        stdio: ['ignore', 'pipe', 'pipe'],
+    const child = spawn(process.execPath, ['--experimental-strip-types', 'src/index.ts'], {
+      cwd: ROOT,
+      env: {
+        PATH: process.env['PATH'] ?? '',
+        NODE_ENV: 'development',
+        // Everything else deliberately absent.
       },
-    );
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
 
     let stderr = '';
-    child.stderr?.on('data', (chunk: Buffer) => {
+    child.stderr.on('data', (chunk: Buffer) => {
       stderr += chunk.toString('utf8');
     });
 

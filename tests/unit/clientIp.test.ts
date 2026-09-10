@@ -1,11 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import {
-  resolveClientIp,
-  UNKNOWN_CLIENT_IP,
-  type ClientIpSource,
-} from '../../src/lib/clientIp.ts';
+import { resolveClientIp, UNKNOWN_CLIENT_IP, type ClientIpSource } from '../../src/lib/clientIp.ts';
 
 /**
  * Builds a request source, so each test states only what it cares about.
@@ -66,10 +62,7 @@ describe('resolveClientIp behind trusted proxies', () => {
   it('never lets a long forged header reach past the trusted entries', () => {
     // Twenty forged entries, one real one appended by the single trusted proxy.
     const forged = Array.from({ length: 20 }, (_, index) => `1.2.3.${index}`).join(', ');
-    const result = resolveClientIp(
-      source({ forwardedFor: `${forged}, 198.51.100.7` }),
-      1,
-    );
+    const result = resolveClientIp(source({ forwardedFor: `${forged}, 198.51.100.7` }), 1);
     assert.equal(result, '198.51.100.7');
   });
 
@@ -85,10 +78,7 @@ describe('resolveClientIp behind trusted proxies', () => {
   });
 
   it('treats a repeated header the same as one comma-separated header', () => {
-    const result = resolveClientIp(
-      source({ forwardedFor: ['1.2.3.4', '198.51.100.7'] }),
-      1,
-    );
+    const result = resolveClientIp(source({ forwardedFor: ['1.2.3.4', '198.51.100.7'] }), 1);
     assert.equal(result, '198.51.100.7');
   });
 

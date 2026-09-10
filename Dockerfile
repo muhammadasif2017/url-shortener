@@ -32,8 +32,15 @@ EXPOSE 3000
 
 # No curl or wget in this image, and adding one to run a health check would be a
 # larger attack surface than the check is worth. Node is already here.
+#
+# /health/live, not /health. Docker's only response to an unhealthy container is
+# to mark it, and an orchestrator reading that mark restarts it. A restart does
+# not repair an unreachable database, so probing the database here would answer
+# a database outage with a restart loop across every instance, at the moment the
+# database is least able to absorb reconnections. Readiness is a question for a
+# load balancer, and it has /health/ready for it.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD ["node", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+  CMD ["node", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
 
 # --env-file-if-exists, not --env-file. There is no .env in this image: the
 # platform injects variables into the process environment, and .env is

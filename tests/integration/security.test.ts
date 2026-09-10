@@ -5,8 +5,8 @@ import { closePool } from '../../src/db/pool.ts';
 import { analyticsRoutes } from '../../src/modules/analytics/analytics.routes.ts';
 import { identityRoutes } from '../../src/modules/identity/identity.routes.ts';
 import { linkRoutes } from '../../src/modules/links/links.routes.ts';
-import { insertLink, truncateLinks } from '../helpers/db.ts';
-import { registerAccount, truncateUsers } from '../helpers/auth.ts';
+import { insertLink, resetDatabase } from '../helpers/db.ts';
+import { registerAccount } from '../helpers/auth.ts';
 import { startTestServer, type TestServer } from '../helpers/server.ts';
 
 /**
@@ -24,8 +24,7 @@ before(async () => {
 });
 
 beforeEach(async () => {
-  await truncateUsers();
-  await truncateLinks();
+  await resetDatabase();
 });
 
 after(async () => {

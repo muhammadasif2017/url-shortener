@@ -51,7 +51,9 @@ function controllableServer(): {
   return {
     server: {
       close(callback) {
-        void closed.then(() => callback());
+        void closed.then(() => {
+          callback();
+        });
       },
     },
     release,
@@ -70,7 +72,14 @@ describe('performShutdown', () => {
       userAgent: undefined,
     });
 
-    const code = await performShutdown({ close: (callback) => callback() }, 'SIGTERM');
+    const code = await performShutdown(
+      {
+        close: (callback) => {
+          callback();
+        },
+      },
+      'SIGTERM',
+    );
     assert.equal(code, 0);
 
     // Reaching the database at all proves the pool closed after the write, and

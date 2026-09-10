@@ -91,10 +91,9 @@ export async function insert(input: InsertLink): Promise<Link> {
  * @returns The link, or `undefined` when no such slug exists.
  */
 export async function findBySlug(slug: string): Promise<Link | undefined> {
-  const result = await pool().query<LinkRow>(
-    `select ${COLUMNS} from links where slug = $1`,
-    [slug],
-  );
+  const result = await pool().query<LinkRow>(`select ${COLUMNS} from links where slug = $1`, [
+    slug,
+  ]);
 
   const row = result.rows[0];
   return row === undefined ? undefined : toLink(row);
@@ -202,7 +201,5 @@ const UNIQUE_VIOLATION = '23505';
  */
 export function isSlugConflict(error: unknown): boolean {
   const candidate = error as Partial<pg.DatabaseError> | null;
-  return (
-    candidate?.code === UNIQUE_VIOLATION && candidate.constraint === 'links_slug_unique'
-  );
+  return candidate?.code === UNIQUE_VIOLATION && candidate.constraint === 'links_slug_unique';
 }

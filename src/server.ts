@@ -16,6 +16,7 @@ import { createRouter } from './http/router.ts';
 import { AppError } from './lib/AppError.ts';
 import { resolveClientIp } from './lib/clientIp.ts';
 import { describeError, log } from './lib/logger.ts';
+import { resolveRequestId } from './lib/requestId.ts';
 
 /**
  * Server assembly.
@@ -42,10 +43,7 @@ const AUTH_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
  * Sign-out and the current-user route are absent: neither hashes anything, and
  * rate limiting sign-out would leave someone unable to end their own session.
  */
-const CREDENTIAL_PATHS: ReadonlySet<string> = new Set([
-  '/api/auth/login',
-  '/api/auth/register',
-]);
+const CREDENTIAL_PATHS: ReadonlySet<string> = new Set(['/api/auth/login', '/api/auth/register']);
 
 /**
  * Requests permitted per window on the redirect path, per instance.
@@ -72,42 +70,69 @@ function tooManyRequests(retryAfterSeconds: number): AppError {
 }
 
 /**
- * The health route.
+ * Answers the readiness question: can this instance serve a request right now?
  *
- * It queries the database on every call. A health check that only proves the
- * process is running answers a question nobody is asking: a service whose
- * database is unreachable is not healthy, and reporting otherwise keeps a
- * broken instance in rotation.
+ * It queries the database on every call. A check that only proves the process
+ * is running answers a question nobody is asking: a service whose database is
+ * unreachable is not healthy, and reporting otherwise keeps a broken instance
+ * in rotation.
+ *
+ * @returns 200 when the database answered, 503 when it did not.
  */
-const healthRoutes: RouteTable = [
+async function readinessResponse(): Promise<RouteResponse> {
+  try {
+    await withTimeout(pool().query('select 1'), HEALTH_TIMEOUT_MS);
+    return json(200, { status: 'ok', database: 'ok' });
+  } catch {
+    // Deliberately not a thrown error. A failing health check is an
+    // expected state to report, not an exception to log on every poll.
+    return json(503, { status: 'degraded', database: 'down' });
+  }
+}
+
+/**
+ * The health routes.
+ *
+ * Liveness and readiness answer different questions, and an orchestrator acts
+ * on them differently: a failed liveness probe restarts the container, while a
+ * failed readiness probe only takes it out of rotation. Serving one endpoint for
+ * both forces the two to agree, and the way they disagree here is expensive. A
+ * database outage is not something a restart repairs, so a single
+ * database-backed probe would answer a restart loop across every instance at
+ * exactly the moment the database is least able to absorb reconnections.
+ *
+ * `/health` is kept, unchanged, and reports readiness. It is what the existing
+ * deployments, tests, and documentation poll, and quietly changing what it means
+ * would be a worse outcome than the split is worth.
+ *
+ * Both new paths are two literal segments, so the router's precedence rules keep
+ * them clear of the `/:slug` redirect without any special case.
+ */
+export const healthRoutes: RouteTable = [
   {
     method: 'GET',
     path: '/health',
-    async handle() {
-      try {
-        await withTimeout(pool().query('select 1'), HEALTH_TIMEOUT_MS);
-        return json(200, { status: 'ok', database: 'ok' });
-      } catch {
-        // Deliberately not a thrown error. A failing health check is an
-        // expected state to report, not an exception to log on every poll.
-        return json(503, { status: 'degraded', database: 'down' });
-      }
-    },
+    handle: readinessResponse,
+  },
+  {
+    /**
+     * Liveness. Deliberately touches nothing outside this process.
+     *
+     * The only failure it can report is one where the event loop is so blocked
+     * that no response is written at all, which is precisely the failure a
+     * restart fixes.
+     */
+    method: 'GET',
+    path: '/health/live',
+    handle: () => json(200, { status: 'ok' }),
+  },
+  {
+    method: 'GET',
+    path: '/health/ready',
+    handle: readinessResponse,
   },
 ];
 
-/**
- * Decides whether a path is subject to rate limiting.
- *
- * The redirect route is exempt, and deliberately so. It is the product, and one
- * shared office behind a single address must not be able to exhaust it for
- * everyone there. The health route is exempt because a platform polls it far
- * more often than any human uses the API, and a rate-limited health check would
- * report the service as unhealthy under its own monitoring.
- *
- * @param pathname - The request path.
- * @returns `true` when the limiter applies.
- */
 /**
  * Whether a path is counted against the shared, cross-instance limit.
  *
@@ -125,6 +150,9 @@ const healthRoutes: RouteTable = [
  * A per-instance cap still bounds that at instances times the cap, which is the
  * property that matters, and paying a synchronous round trip to a database in
  * order to protect that database from writes would be self-defeating.
+ *
+ * @param pathname - The request path.
+ * @returns `true` when the shared counter decides this request.
  */
 function isSharedRateLimited(pathname: string): boolean {
   return pathname.startsWith('/api/');
@@ -149,7 +177,9 @@ async function withTimeout<T>(work: Promise<T>, milliseconds: number): Promise<T
     return await Promise.race([
       work,
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error('Timed out')), milliseconds);
+        timer = setTimeout(() => {
+          reject(new Error('Timed out'));
+        }, milliseconds);
       }),
     ]);
   } finally {
@@ -249,15 +279,19 @@ export function createAppServer(
     const rawUrl = request.url ?? '/';
     const url = new URL(rawUrl, config.baseUrl);
 
+    // Resolved before anything can fail, so that every response this pipeline
+    // writes carries an id, including the ones no handler ever sees.
+    const requestId = resolveRequestId(request.headers['x-request-id']);
+
     const match = router.match(method, url.pathname);
 
     if (match.type === 'not-found') {
-      send(response, notFoundResponse(), method);
+      send(response, notFoundResponse(), method, requestId);
       return;
     }
 
     if (match.type === 'method-not-allowed') {
-      send(response, methodNotAllowedResponse(match.allow), method);
+      send(response, methodNotAllowedResponse(match.allow), method, requestId);
       return;
     }
 
@@ -274,7 +308,12 @@ export function createAppServer(
 
     const limited = await applyRateLimit(url.pathname, clientIp);
     if (limited !== undefined) {
-      send(response, toErrorResponse(limited, { method, path: url.pathname }), method);
+      send(
+        response,
+        toErrorResponse(limited, { method, path: url.pathname, requestId }),
+        method,
+        requestId,
+      );
       if (!request.readableEnded) request.resume();
       return;
     }
@@ -306,6 +345,7 @@ export function createAppServer(
           // exactly the moment the service is least able to absorb load.
           log('error', 'rate limit check failed', {
             path: pathname,
+            requestId,
             ...describeError(error),
           });
           return new AppError('SERVICE_UNAVAILABLE', 'Try again shortly.', 503, {
@@ -330,8 +370,10 @@ export function createAppServer(
           toErrorResponse(new AppError(read.code, read.message, read.status), {
             method,
             path: url.pathname,
+            requestId,
           }),
           method,
+          requestId,
         );
         return;
       }
@@ -346,6 +388,7 @@ export function createAppServer(
       headers: request.headers,
       clientIp,
       rateLimitNamespace: namespace,
+      requestId,
       ...(body === undefined ? {} : { body }),
     };
 
@@ -353,10 +396,10 @@ export function createAppServer(
     try {
       result = await match.route.handle(context);
     } catch (error) {
-      result = toErrorResponse(error, { method, path: url.pathname });
+      result = toErrorResponse(error, { method, path: url.pathname, requestId });
     }
 
-    send(response, result, method);
+    send(response, result, method, requestId);
 
     // Drain anything the client is still sending, now that the response has
     // gone out. An oversized body stops being read at the limit, which leaves

@@ -1,0 +1,73 @@
+# Path-based pull request labels.
+#
+# The Labeler workflow fails without this file, with `Error: HttpError: Not
+# Found`, because actions/labeler treats a missing configuration as a fatal
+# error rather than as nothing to do.
+#
+# Labels describe which part of the service a change touches, so that a reviewer
+# can tell from the pull request list whether it needs a database review, a
+# security review, or neither. The labels mirror the module boundaries the code
+# already has; a change that lands in two of them is labelled twice, which is
+# itself worth seeing.
+#
+# actions/labeler@v4 syntax: a label maps to a list of glob patterns, and any
+# match applies the label.
+
+links:
+  - src/modules/links/**
+  - tests/**/links.test.ts
+  - tests/**/redirect.test.ts
+
+identity:
+  - src/modules/identity/**
+  - tests/**/identity.test.ts
+
+analytics:
+  - src/modules/analytics/**
+  - tests/**/analytics.test.ts
+  - tests/**/stats.test.ts
+  - tests/**/referrers.test.ts
+
+http:
+  - src/http/**
+  - src/server.ts
+
+# Anything that changes the stored shape. A migration is the one kind of change
+# this project can never edit after it ships, so it is worth flagging on sight.
+database:
+  - migrations/**
+  - src/db/**
+  - scripts/migrate.ts
+
+security:
+  - THREAT-MODEL.md
+  - src/lib/password.ts
+  - src/lib/sessionId.ts
+  - src/lib/ipHash.ts
+  - src/http/auth.ts
+  - src/http/cookies.ts
+  - src/http/rateLimit.ts
+  - src/http/sharedRateLimit.ts
+  - tests/**/security.test.ts
+  - tests/**/hardening.test.ts
+
+documentation:
+  - '**/*.md'
+  - openapi.json
+
+# Changes to how the project is built, checked, or shipped rather than to what
+# it does.
+tooling:
+  - .github/**
+  - Dockerfile
+  - docker-compose.yml
+  - docker/**
+  - eslint.config.js
+  - .prettierrc.json
+  - .prettierignore
+  - package.json
+  - package-lock.json
+  - tsconfig.json
+
+tests:
+  - tests/**

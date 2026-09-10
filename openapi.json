@@ -1,0 +1,634 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "URL Shortener API",
+    "version": "0.1.0",
+    "summary": "Short links, accounts, and per-link click statistics.",
+    "description": "The machine-readable form of the contract described in SPEC.md. Where the two disagree, SPEC.md is the reasoning and this file is the shape; a difference between them is a bug in this file.\n\nEvery response carries an X-Request-Id header, and every log line written while serving the request carries the same value. Quote it in a bug report and the request can be found in the log.\n\nEvery failure shares one body shape, described by the Error schema. A validation failure adds field-level details; nothing else does.",
+    "license": { "name": "UNLICENSED" }
+  },
+  "servers": [{ "url": "http://localhost:3000", "description": "Local development" }],
+  "tags": [
+    { "name": "Links", "description": "Creating, listing, resolving, and deleting short links." },
+    { "name": "Identity", "description": "Accounts and cookie sessions." },
+    { "name": "Analytics", "description": "Per-link click statistics, owner only." },
+    { "name": "Operations", "description": "Liveness and readiness probes." }
+  ],
+  "paths": {
+    "/health/live": {
+      "get": {
+        "tags": ["Operations"],
+        "summary": "Liveness probe",
+        "description": "Touches nothing outside the process. The only failure it can report is one a restart repairs, which is why container health checks point here rather than at the readiness probe.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The process is serving requests.",
+            "headers": { "X-Request-Id": { "$ref": "#/components/headers/RequestId" } },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["status"],
+                  "properties": { "status": { "type": "string", "const": "ok" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "tags": ["Operations"],
+        "summary": "Readiness probe",
+        "description": "Queries the database. A load balancer reads this to decide whether to send traffic to the instance.",
+        "security": [],
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ready" },
+          "503": { "$ref": "#/components/responses/NotReady" }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": ["Operations"],
+        "summary": "Readiness probe, original path",
+        "description": "The same answer as /health/ready. Kept unchanged because deployments and monitors already poll it.",
+        "security": [],
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ready" },
+          "503": { "$ref": "#/components/responses/NotReady" }
+        }
+      }
+    },
+    "/{slug}": {
+      "parameters": [{ "$ref": "#/components/parameters/Slug" }],
+      "get": {
+        "tags": ["Links"],
+        "summary": "Follow a short link",
+        "description": "The product. 302 rather than 301: a permanent redirect is cached by browsers indefinitely, which makes a mistyped destination unfixable and hides every later visit from the server.\n\nThe click is recorded without the visitor waiting for the write, so counts are a lower bound.",
+        "security": [],
+        "responses": {
+          "302": {
+            "description": "Redirect to the destination.",
+            "headers": {
+              "Location": {
+                "description": "The destination URL.",
+                "schema": { "type": "string", "format": "uri" }
+              },
+              "Cache-Control": {
+                "description": "Always no-store, so a deleted link stops working and every visit is counted.",
+                "schema": { "type": "string" }
+              },
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+            }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "410": {
+            "description": "The link existed and has expired.",
+            "headers": { "X-Request-Id": { "$ref": "#/components/headers/RequestId" } },
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/Error" } }
+            }
+          },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+    "/api/links": {
+      "post": {
+        "tags": ["Links"],
+        "summary": "Create a short link",
+        "description": "Requires a session, so every link has an owner. Anonymous creation was removed deliberately: a link that borrows this domain's reputation for a phishing page is the product working as built, and with no owner there is nobody to suspend.\n\nWhether a custom slug is already taken is decided by the database's unique index rather than by a prior lookup, because checking and then inserting is a race.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/CreateLinkRequest" } }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created.",
+            "headers": { "X-Request-Id": { "$ref": "#/components/headers/RequestId" } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Link" } } }
+          },
+          "400": { "$ref": "#/components/responses/ValidationFailed" },
+          "401": { "$ref": "#/components/responses/Unauthenticated" },
+          "409": {
+            "description": "The requested slug is already in use.",
+            "headers": { "X-Request-Id": { "$ref": "#/components/headers/RequestId" } },
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/Error" } }
+            }
+          },
+          "415": { "$ref": "#/components/responses/UnsupportedMediaType" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "503": { "$ref": "#/components/responses/Unavailable" }
+        }
+      },
+      "get": {
+        "tags": ["Links"],
+        "summary": "List the caller's own links",
+        "description": "Newest first, cursor paginated. The cursor is opaque base64url rather than the row id, so callers do not build logic on its contents.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size.",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 20 }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "The nextCursor from the previous page. Omit for the first page.",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of links.",
+            "headers": { "X-Request-Id": { "$ref": "#/components/headers/RequestId" } },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["data", "nextCursor"],
+                  "properties": {
+                    "data": { "type": "array", "items": { "$ref": "#/components/schemas/Link" } },
+                    "nextCursor": {
+                      "type": ["string", "null"],
+                      "description": "Null on the last page."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/ValidationFailed" },
+          "401": { "$ref": "#/components/responses/Unauthenticated" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "503": { "$ref": "#/components/responses/Unavailable" }
+        }
+      }
+    },
+    "/api/links/{slug}": {
+      "parameters": [{ "$ref": "#/components/parameters/Slug" }],
+      "get": {
+        "tags": ["Links"],
+        "summary": "Read one of the caller's links",
+        "description": "Owner only, including for a link that has already expired. A slug appears in browser history and referrer headers, so it is public by construction and cannot also be the credential guarding the link's metadata.",
+        "responses": {
+          "200": {
+            "description": "The link.",
+            "headers": { "X-Request-Id": { "$ref": "#/components/headers/RequestId" } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Link" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthenticated" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "503": { "$ref": "#/components/responses/Unavailable" }
+        }
+      },
+      "delete": {
+        "tags": ["Links"],
+        "summary": "Delete one of the caller's links",
+        "responses": {
+          "204": {
+            "description": "Deleted. No body.",
+            "headers": { "X-Request-Id": { "$ref": "#/components/headers/RequestId" } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthenticated" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "503": { "$ref": "#/components/responses/Unavailable" }
+        }
+      }
+    },
+    "/api/links/{slug}/stats": {
+      "parameters": [{ "$ref": "#/components/parameters/Slug" }],
+      "get": {
+        "tags": ["Analytics"],
+        "summary": "Click statistics for one link",
+        "description": "Owner only. Every figure is a lower bound: the click write is not awaited, so a crash between the response and the insert drops the event.",
+        "parameters": [{ "$ref": "#/components/parameters/WindowDays" }],
+        "responses": {
+          "200": {
+            "description": "Totals and a dense per-day series.",
+            "headers": { "X-Request-Id": { "$ref": "#/components/headers/RequestId" } },
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/LinkStats" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/ValidationFailed" },
+          "401": { "$ref": "#/components/responses/Unauthenticated" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "503": { "$ref": "#/components/responses/Unavailable" }
+        }
+      }
+    },
+    "/api/links/{slug}/referrers": {
+      "parameters": [{ "$ref": "#/components/parameters/Slug" }],
+      "get": {
+        "tags": ["Analytics"],
+        "summary": "Ranked traffic sources for one link",
+        "description": "Owner only, bot rows excluded. Direct traffic is null rather than a label, because a site could otherwise name itself \"direct\" and become indistinguishable from it.",
+        "parameters": [
+          { "$ref": "#/components/parameters/WindowDays" },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "How many sources to return.",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 50, "default": 10 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sources, ranked most to least.",
+            "headers": { "X-Request-Id": { "$ref": "#/components/headers/RequestId" } },
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/LinkReferrers" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/ValidationFailed" },
+          "401": { "$ref": "#/components/responses/Unauthenticated" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "503": { "$ref": "#/components/responses/Unavailable" }
+        }
+      }
+    },
+    "/api/auth/register": {
+      "post": {
+        "tags": ["Identity"],
+        "summary": "Create an account",
+        "description": "Always 202, whether or not the address was already registered, and never a session. A 201 with a body would confirm the address was free and a 409 would confirm it was taken; even issuing a cookie on one path and not the other would say it. Sign in as a separate step.",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/Credentials" } }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted. Identical whether or not an account already existed.",
+            "headers": { "X-Request-Id": { "$ref": "#/components/headers/RequestId" } },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["status", "message"],
+                  "properties": {
+                    "status": { "type": "string", "const": "accepted" },
+                    "message": { "type": "string" }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/ValidationFailed" },
+          "415": { "$ref": "#/components/responses/UnsupportedMediaType" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "503": { "$ref": "#/components/responses/Unavailable" }
+        }
+      }
+    },
+    "/api/auth/login": {
+      "post": {
+        "tags": ["Identity"],
+        "summary": "Sign in",
+        "description": "A malformed body gets the same 401 as wrong credentials rather than a 400 naming the bad field, because a validation error here would confirm an address exists or reveal the password policy to someone guessing.\n\nThe session id travels in an HttpOnly cookie, named __Host-session in production. It is a random opaque value stored hashed, so it is revocable server-side and there is no signature to verify.",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/Credentials" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Signed in. Sets the session cookie.",
+            "headers": {
+              "Set-Cookie": {
+                "description": "The session cookie: HttpOnly, SameSite=Lax, Secure and __Host-prefixed in production.",
+                "schema": { "type": "string" }
+              },
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+            },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/User" } } }
+          },
+          "401": {
+            "description": "Wrong credentials, or a body that could not be read as credentials.",
+            "headers": { "X-Request-Id": { "$ref": "#/components/headers/RequestId" } },
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/Error" } }
+            }
+          },
+          "415": { "$ref": "#/components/responses/UnsupportedMediaType" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "503": { "$ref": "#/components/responses/Unavailable" }
+        }
+      }
+    },
+    "/api/auth/logout": {
+      "post": {
+        "tags": ["Identity"],
+        "summary": "Sign out",
+        "description": "Deletes the session row and clears the cookie. Requires no session and no content type: answering 401 to someone whose session already expired would be unhelpful, and signing out is not a state change an attacker benefits from forcing.",
+        "security": [],
+        "responses": {
+          "204": {
+            "description": "Signed out, whether or not a session existed.",
+            "headers": {
+              "Set-Cookie": {
+                "description": "The session cookie, expired.",
+                "schema": { "type": "string" }
+              },
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+            }
+          },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "503": { "$ref": "#/components/responses/Unavailable" }
+        }
+      }
+    },
+    "/api/auth/me": {
+      "get": {
+        "tags": ["Identity"],
+        "summary": "The current account",
+        "responses": {
+          "200": {
+            "description": "The signed-in account.",
+            "headers": { "X-Request-Id": { "$ref": "#/components/headers/RequestId" } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/User" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthenticated" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "503": { "$ref": "#/components/responses/Unavailable" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "sessionCookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "__Host-session",
+        "description": "Named `session` outside production, where the __Host- prefix cannot be used because it requires Secure and therefore HTTPS."
+      }
+    },
+    "headers": {
+      "RequestId": {
+        "description": "Correlation id for this request. Present on every response, including errors. Quote it in a bug report.",
+        "schema": { "type": "string", "maxLength": 128, "pattern": "^[A-Za-z0-9._~-]+$" }
+      },
+      "RetryAfter": {
+        "description": "Seconds to wait before retrying.",
+        "schema": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "parameters": {
+      "Slug": {
+        "name": "slug",
+        "in": "path",
+        "required": true,
+        "description": "The link's slug: 7 generated base62 characters, or 3 to 32 caller-chosen characters from A-Z, a-z, 0-9, underscore and hyphen.",
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        }
+      },
+      "WindowDays": {
+        "name": "days",
+        "in": "query",
+        "required": false,
+        "description": "Reporting window in whole UTC days, ending today. Bounded because an unbounded breakdown returns one entry per day for as long as the link has existed.",
+        "schema": { "type": "integer", "minimum": 1, "maximum": 90, "default": 30 }
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "description": "The one failure shape this service returns. A message is safe to show a caller: anything that was not raised deliberately is logged in full and answered with a generic 500.",
+        "required": ["error"],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": ["code", "message"],
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "Stable machine-readable identifier, such as SLUG_TAKEN.",
+                "examples": ["VALIDATION_FAILED", "SLUG_TAKEN", "RATE_LIMITED"]
+              },
+              "message": { "type": "string" },
+              "details": {
+                "type": "array",
+                "description": "Field-level problems. Present on a validation failure, and every problem is reported at once rather than only the first.",
+                "items": {
+                  "type": "object",
+                  "required": ["field", "message"],
+                  "properties": {
+                    "field": { "type": "string" },
+                    "message": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "CreateLinkRequest": {
+        "type": "object",
+        "required": ["url"],
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Destination. Must be http: or https:, and must not point back at this service's own host, which would be a redirect loop."
+          },
+          "customSlug": {
+            "type": ["string", "null"],
+            "minLength": 3,
+            "maxLength": 32,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Omit to have one generated. A dot is excluded from the character set so a slug cannot resemble a filename. Reserved slugs such as health are refused with 400, not 409, because they conflict with no stored row."
+          },
+          "expiresAt": {
+            "type": ["string", "null"],
+            "format": "date-time",
+            "description": "Must be in the future. Omit for a link that never expires."
+          }
+        }
+      },
+      "Link": {
+        "type": "object",
+        "description": "A link as returned. The internal row id is deliberately absent: publishing a sequential identifier would tell every caller how many links exist and let them walk the table.",
+        "required": ["slug", "shortUrl", "url", "expiresAt", "createdAt"],
+        "properties": {
+          "slug": { "type": "string" },
+          "shortUrl": { "type": "string", "format": "uri" },
+          "url": { "type": "string", "format": "uri" },
+          "expiresAt": { "type": ["string", "null"], "format": "date-time" },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "Credentials": {
+        "type": "object",
+        "required": ["email", "password"],
+        "properties": {
+          "email": { "type": "string", "format": "email" },
+          "password": { "type": "string", "minLength": 12, "maxLength": 128 }
+        }
+      },
+      "User": {
+        "type": "object",
+        "required": ["id", "email", "createdAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "email": { "type": "string", "format": "email" },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "LinkStats": {
+        "type": "object",
+        "required": ["slug", "windowDays", "total", "uniqueVisitors", "botClicks", "byDay"],
+        "properties": {
+          "slug": { "type": "string" },
+          "windowDays": { "type": "integer" },
+          "total": { "type": "integer", "description": "Clicks not from an announced bot." },
+          "uniqueVisitors": {
+            "type": "integer",
+            "description": "Distinct salted address digests among those clicks. Rotating IP_HASH_SALT resets this figure."
+          },
+          "botClicks": {
+            "type": "integer",
+            "description": "Clicks excluded from the two figures above."
+          },
+          "byDay": {
+            "type": "array",
+            "description": "Dense: every UTC day in the window appears once, including zeros, so nothing downstream rebuilds the calendar and a gap cannot read as continuity.",
+            "items": {
+              "type": "object",
+              "required": ["date", "clicks"],
+              "properties": {
+                "date": { "type": "string", "format": "date" },
+                "clicks": { "type": "integer" }
+              }
+            }
+          }
+        }
+      },
+      "LinkReferrers": {
+        "type": "object",
+        "required": ["slug", "windowDays", "referrers"],
+        "properties": {
+          "slug": { "type": "string" },
+          "windowDays": { "type": "integer" },
+          "referrers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["referrer", "clicks"],
+              "properties": {
+                "referrer": {
+                  "type": ["string", "null"],
+                  "description": "The Referer header as sent, truncated. Null means direct traffic."
+                },
+                "clicks": { "type": "integer" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "responses": {
+      "Ready": {
+        "description": "The database answered.",
+        "headers": { "X-Request-Id": { "$ref": "#/components/headers/RequestId" } },
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": ["status", "database"],
+              "properties": {
+                "status": { "type": "string", "const": "ok" },
+                "database": { "type": "string", "const": "ok" }
+              }
+            }
+          }
+        }
+      },
+      "NotReady": {
+        "description": "The database did not answer within the timeout.",
+        "headers": { "X-Request-Id": { "$ref": "#/components/headers/RequestId" } },
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": ["status", "database"],
+              "properties": {
+                "status": { "type": "string", "const": "degraded" },
+                "database": { "type": "string", "const": "down" }
+              }
+            }
+          }
+        }
+      },
+      "ValidationFailed": {
+        "description": "The request body or query was rejected. Every problem is listed, not only the first, and the offending value is never reflected back.",
+        "headers": { "X-Request-Id": { "$ref": "#/components/headers/RequestId" } },
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "Unauthenticated": {
+        "description": "No session, or one that has expired.",
+        "headers": { "X-Request-Id": { "$ref": "#/components/headers/RequestId" } },
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "Forbidden": {
+        "description": "The link belongs to someone else, or to nobody.",
+        "headers": { "X-Request-Id": { "$ref": "#/components/headers/RequestId" } },
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "NotFound": {
+        "description": "No such slug.",
+        "headers": { "X-Request-Id": { "$ref": "#/components/headers/RequestId" } },
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "UnsupportedMediaType": {
+        "description": "The request did not declare a JSON content type.",
+        "headers": { "X-Request-Id": { "$ref": "#/components/headers/RequestId" } },
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "RateLimited": {
+        "description": "Too many requests. Credential endpoints are limited far more strictly than the rest, because each attempt runs scrypt on a service with one event loop.",
+        "headers": {
+          "Retry-After": { "$ref": "#/components/headers/RetryAfter" },
+          "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+        },
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "Unavailable": {
+        "description": "The shared rate-limit counter could not be read. The counter lives in the same database the route needs, so this is a database that cannot serve the request either; the limiter fails closed rather than removing the limit when the service is least able to absorb load.",
+        "headers": {
+          "Retry-After": { "$ref": "#/components/headers/RetryAfter" },
+          "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+        },
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      }
+    }
+  },
+  "security": [{ "sessionCookie": [] }]
+}

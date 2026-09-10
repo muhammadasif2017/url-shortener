@@ -73,7 +73,7 @@ async function requireAccountAttemptsRemaining(
   );
   if (decision.allowed) return;
 
-  audit('auth.login.throttled', { clientIp: context.clientIp });
+  audit('auth.login.throttled', { clientIp: context.clientIp, requestId: context.requestId });
   throw new AppError('RATE_LIMITED', 'Too many failed sign-in attempts.', 429, {
     headers: { 'Retry-After': String(decision.retryAfterSeconds) },
   });
@@ -115,9 +115,16 @@ export const identityRoutes: RouteTable = [
       // operator reconstructing an incident, not returned to the caller, so the
       // asymmetry here costs nothing that the response is protecting.
       if (user === undefined) {
-        audit('auth.register.duplicate', { clientIp: context.clientIp });
+        audit('auth.register.duplicate', {
+          clientIp: context.clientIp,
+          requestId: context.requestId,
+        });
       } else {
-        audit('auth.register', { userId: user.id, clientIp: context.clientIp });
+        audit('auth.register', {
+          userId: user.id,
+          clientIp: context.clientIp,
+          requestId: context.requestId,
+        });
       }
 
       // One answer for both cases, carrying no account details and no session.
@@ -162,12 +169,16 @@ export const identityRoutes: RouteTable = [
             accountFailureBucket(parsed.value.email, context),
             ACCOUNT_FAILURE_LIMIT,
           );
-          audit('auth.login.failed', { clientIp: context.clientIp });
+          audit('auth.login.failed', { clientIp: context.clientIp, requestId: context.requestId });
         }
         throw error;
       }
 
-      audit('auth.login.succeeded', { userId: user.id, clientIp: context.clientIp });
+      audit('auth.login.succeeded', {
+        userId: user.id,
+        clientIp: context.clientIp,
+        requestId: context.requestId,
+      });
 
       return json(200, toUserResponse(user), {
         'Set-Cookie': sessionCookie(session.id),
@@ -189,7 +200,11 @@ export const identityRoutes: RouteTable = [
       await identityService.logout(sessionId);
 
       if (user !== undefined) {
-        audit('auth.logout', { userId: user.id, clientIp: context.clientIp });
+        audit('auth.logout', {
+          userId: user.id,
+          clientIp: context.clientIp,
+          requestId: context.requestId,
+        });
       }
 
       return noContent({ 'Set-Cookie': clearSessionCookie() });

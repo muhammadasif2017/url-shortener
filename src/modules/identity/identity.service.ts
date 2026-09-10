@@ -116,9 +116,7 @@ async function createSession(userId: string): Promise<Session> {
  * @returns The user, or `undefined` when the session is missing, unknown, or
  *   expired. All three mean the same thing to a caller: unauthenticated.
  */
-export async function resolveSession(
-  sessionId: string | undefined,
-): Promise<User | undefined> {
+export async function resolveSession(sessionId: string | undefined): Promise<User | undefined> {
   if (sessionId === undefined || sessionId === '') return undefined;
   return repository.findUserBySession(sessionId);
 }

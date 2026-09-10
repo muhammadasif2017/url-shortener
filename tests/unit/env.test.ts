@@ -48,8 +48,14 @@ describe('loadEnv', () => {
 
   it('strips a trailing slash from BASE_URL', () => {
     // Left in place, every generated shortUrl would contain a double slash.
-    assert.equal(loadEnv(validEnv({ BASE_URL: 'https://x.example/' })).baseUrl, 'https://x.example');
-    assert.equal(loadEnv(validEnv({ BASE_URL: 'https://x.example//' })).baseUrl, 'https://x.example');
+    assert.equal(
+      loadEnv(validEnv({ BASE_URL: 'https://x.example/' })).baseUrl,
+      'https://x.example',
+    );
+    assert.equal(
+      loadEnv(validEnv({ BASE_URL: 'https://x.example//' })).baseUrl,
+      'https://x.example',
+    );
   });
 
   it('reports every problem at once, not just the first', () => {
@@ -128,8 +134,6 @@ describe('loadEnv', () => {
     // The flag gated listing and deletion while those routes had no ownership
     // check. Identity authenticates them now, so the flag was removed rather
     // than left switched off: a flag that can be switched back on eventually is.
-    assert.doesNotThrow(() =>
-      loadEnv(validEnv({ ENABLE_UNAUTHENTICATED_LINK_ADMIN: '1' })),
-    );
+    assert.doesNotThrow(() => loadEnv(validEnv({ ENABLE_UNAUTHENTICATED_LINK_ADMIN: '1' })));
   });
 });

@@ -11,11 +11,14 @@
  * records the session id logs the credential itself.
  */
 
-/** Severity levels, ordered from least to most severe. */
-const LEVELS = ['debug', 'info', 'warn', 'error'] as const;
-
-/** A log severity. Derived from a `const` array, since `enum` cannot be erased. */
-export type LogLevel = (typeof LEVELS)[number];
+/**
+ * A log severity, ordered here from least to most severe.
+ *
+ * A union rather than an `enum`, which this project cannot use: Node strips
+ * types at runtime and an `enum` is the one TypeScript construct that would
+ * need to be rewritten rather than erased.
+ */
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 /** Arbitrary structured fields attached to a log line. */
 export type LogFields = Record<string, unknown>;

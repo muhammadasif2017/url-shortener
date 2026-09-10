@@ -96,11 +96,7 @@ const INVALID_NAME = /[\s()<>@,;:\\"/[\]?={}]/;
  * @throws {Error} When the name contains a character a cookie name may not
  *   contain. That is always a programming mistake, never caller input.
  */
-export function serialiseCookie(
-  name: string,
-  value: string,
-  options: CookieOptions = {},
-): string {
+export function serialiseCookie(name: string, value: string, options: CookieOptions = {}): string {
   if (name === '' || INVALID_NAME.test(name)) {
     throw new Error(`Invalid cookie name: ${JSON.stringify(name)}`);
   }

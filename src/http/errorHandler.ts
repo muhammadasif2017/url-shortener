@@ -30,11 +30,17 @@ export type ErrorBody = {
  * @param error - Whatever was thrown.
  * @param context.method - Request method, for the log line.
  * @param context.path - Request path, for the log line.
+ * @param context.requestId - Correlation id, for the log line. Absent only
+ *   where a failure happened before one could be resolved.
  * @returns The response to send.
  */
 export function toErrorResponse(
   error: unknown,
-  context: { readonly method: string; readonly path: string },
+  context: {
+    readonly method: string;
+    readonly path: string;
+    readonly requestId?: string;
+  },
 ): RouteResponse {
   if (error instanceof AppError) {
     // Client errors are ordinary traffic and would drown the log. Server errors
@@ -78,10 +84,10 @@ export function toErrorResponse(
  * @returns A 404 in the standard error shape.
  */
 export function notFoundResponse(): RouteResponse {
-  return toErrorResponse(
-    AppError.notFound('NOT_FOUND', 'No such endpoint.'),
-    { method: '', path: '' },
-  );
+  return toErrorResponse(AppError.notFound('NOT_FOUND', 'No such endpoint.'), {
+    method: '',
+    path: '',
+  });
 }
 
 /**

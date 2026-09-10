@@ -80,7 +80,7 @@ export function generateSlug(): string {
 
     for (const byte of buffer) {
       if (byte >= REJECTION_THRESHOLD) continue;
-      slug += ALPHABET[byte % ALPHABET.length];
+      slug += ALPHABET.charAt(byte % ALPHABET.length);
       if (slug.length === SLUG_LENGTH) break;
     }
   }

@@ -18,7 +18,7 @@ Rules for every task below:
     `SPEC.md`. `tsconfig.json` exactly as specified. `.nvmrc` pinned to
     `22.15.0`. `.env.example` listing every variable in the environment table.
   - Verify: `npm run typecheck` exits 0, and `node --experimental-strip-types
-    src/index.ts` runs.
+src/index.ts` runs.
   - Files: `package.json`, `tsconfig.json`, `.nvmrc`, `.env.example`,
     `src/index.ts`
   - Note: the original verify step said "exits 0 on an empty `src/`", which is
@@ -223,7 +223,7 @@ Rules for every task below:
   - Verify: integration tests using `redirect: 'manual'` for 302, 404, 410, and
     a `HEAD` request asserting an empty body.
   - Verified: 9 tests, including case-sensitive slug matching, `Cache-Control:
-    no-store`, and two proving the catch-all does not swallow `/health` or
+no-store`, and two proving the catch-all does not swallow `/health` or
     `/api/links`.
 
 - [x] **B3. `GET /api/links/:slug`** — done
@@ -798,7 +798,7 @@ your Render account, and success criterion 19 with it.
 ## Review follow-ups
 
 - [x] **R1. Split the pending-write tracker out of the analytics service** —
-  done
+      done
   - Acceptance: `analytics.service.ts` holds what a click is; the mechanism for
     running a write nobody waits for lives on its own.
   - Verify: 311 tests pass, 1 of them new, and `npm run typecheck` is clean.

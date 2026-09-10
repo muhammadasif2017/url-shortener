@@ -38,10 +38,7 @@ const MAX_SLUG_ATTEMPTS = 5;
  * @throws {AppError} 400 when the slug is reserved, 409 when it is taken, 503
  *   when five generated slugs collide in a row.
  */
-export async function createLink(
-  input: CreateLinkInput,
-  ownerId?: string,
-): Promise<Link> {
+export async function createLink(input: CreateLinkInput, ownerId?: string): Promise<Link> {
   if (input.customSlug !== undefined) {
     // A reserved slug is 400, not 409. It conflicts with no stored row and is
     // knowable without touching the database, which makes it a validation
