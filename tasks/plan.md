@@ -1,5 +1,9 @@
 # Implementation Plan: URL Shortener API
 
+> **Historical.** This plan was followed and completed. It is kept as a record of
+> how the work was sequenced, not as a description of the service. See
+> `docs/request-lifecycle.md` and `docs/adr/` for the current picture.
+
 Derived from `SPEC.md`, `SPEC-links.md`, `SPEC-identity.md`, `SPEC-analytics.md`.
 Task list: `tasks/todo.md`.
 

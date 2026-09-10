@@ -55,6 +55,11 @@ documentation:
   - '**/*.md'
   - openapi.json
 
+# A change to a decision record deserves its own label. Superseding one is the
+# most consequential documentation change this repository has.
+adr:
+  - docs/adr/**
+
 # Changes to how the project is built, checked, or shipped rather than to what
 # it does.
 tooling:

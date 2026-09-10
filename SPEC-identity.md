@@ -220,9 +220,12 @@ successful sign-in.
 
 ## Decision: anonymous links stay ownerless
 
-**Resolved.** Links created before this module exists keep a null `owner_id`
-forever. There is no claim flow, because a claim flow needs a proof of ownership
-that was never issued.
+**Resolved.** Recorded in full as
+[ADR 0003](docs/adr/0003-anonymous-links-stay-ownerless.md). Links created before
+this module exists keep a null `owner_id` forever. There is no claim flow,
+because a claim flow needs a proof of ownership that was never issued: anything
+built on a weaker signal, such as possession of the slug, would hand every link
+to whoever read it first.
 
 Consequence for `links`: `owner_id` is nullable, and the listing query must
 distinguish "belongs to nobody" from "belongs to someone else". Once this module
@@ -259,18 +262,27 @@ session stays alive for as long as the thief keeps using it, which is the
 opposite of what an expiry is for. The cost is that an active user is signed out
 after seven days, which is a small annoyance and an easy one to explain.
 
-## Resolved: anonymous link creation survives
+## Reversed: anonymous link creation does not survive
 
-**Resolved.** `POST /api/links` stays open to unauthenticated callers.
+**This section is superseded.** It is kept, rather than deleted, because the
+reasoning below is what the threat model had to argue against, and a decision
+that vanishes cannot be reviewed.
 
-Anonymous creation is the product's simplest useful behaviour, and removing it
-would make the service less useful in order to make the data model tidier. A
-link created without an account keeps a null `owner_id` and cannot be listed or
-deleted through the API, which is the trade the creator accepts by not signing
-in.
+It originally read that `POST /api/links` stays open to unauthenticated callers,
+on the grounds that anonymous creation is the product's simplest useful
+behaviour and that removing it would make the service less useful in order to
+make the data model tidier.
 
-This also means `owner_id` must stay nullable forever, not just during the
-migration.
+The threat model reversed it. A link that borrows this domain's reputation for a
+phishing page is the product working exactly as built, and with no owner there is
+nobody to suspend and no way to find the rest of what the same person made.
+Creating a link now requires a session, and an anonymous `POST /api/links`
+answers `401`. See
+[ADR 0006](docs/adr/0006-require-a-session-to-create-a-link.md).
+
+What survives from it: `owner_id` stays nullable forever, not just during the
+migration, because rows created before the reversal still have a null owner and
+are never adopted.
 
 ## Resolved: no email verification
 

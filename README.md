@@ -7,11 +7,22 @@ This is a learning project. Every choice is made to expose a backend concept
 rather than to reach a result quickly, which is why there is no web framework,
 no test framework, no validation library, and no migration tool.
 
-Full requirements are in [`SPEC.md`](SPEC.md), with one spec per module in
-[`SPEC-links.md`](SPEC-links.md), [`SPEC-identity.md`](SPEC-identity.md), and
-[`SPEC-analytics.md`](SPEC-analytics.md). The plan and the ordered task list are
-in [`tasks/`](tasks/), and every task there records what was verified and what
-was found wrong along the way.
+## Where to read next
+
+There is a lot of writing in this repository. This table is the index.
+
+| If you want to know                    | Read                                                                                                            |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| How a request travels through the code | [`docs/request-lifecycle.md`](docs/request-lifecycle.md)                                                        |
+| What each endpoint accepts and returns | [`openapi.json`](openapi.json), or the API tables below                                                         |
+| Why something is built this way        | [`docs/adr/`](docs/adr/README.md)                                                                               |
+| The full requirements                  | [`SPEC.md`](SPEC.md), plus [links](SPEC-links.md), [identity](SPEC-identity.md), [analytics](SPEC-analytics.md) |
+| What an attacker could do              | [`THREAT-MODEL.md`](THREAT-MODEL.md)                                                                            |
+| How to work on it                      | [`CONTRIBUTING.md`](CONTRIBUTING.md)                                                                            |
+| How it was built, step by step         | [`tasks/`](tasks/) — a build log, not current behaviour                                                         |
+
+Start with the request lifecycle. It names the file that owns each step, and the
+rest of the codebase stops being a maze after it.
 
 ## Requirements
 
@@ -290,5 +301,9 @@ Dockerfile, a separate `DATABASE_SSL` setting with a `DATABASE_CA_CERT` bundle
 to verify the database certificate against, and migrations as a pre-deploy step. The graceful `SIGTERM` path is verified in the container, since Windows
 cannot deliver that signal.
 
-Progress and the reasoning behind each decision are in
-[`tasks/todo.md`](tasks/todo.md).
+The reasoning behind each decision is in [`docs/adr/`](docs/adr/README.md).
+
+[`tasks/todo.md`](tasks/todo.md) is the build log: 38 tasks, each recording what
+was verified and what was found wrong along the way. It is history, and it is
+kept because the mistakes in it are the most useful part. It is not a
+description of how the service behaves now.

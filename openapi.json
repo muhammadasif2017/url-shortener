@@ -4,7 +4,7 @@
     "title": "URL Shortener API",
     "version": "0.1.0",
     "summary": "Short links, accounts, and per-link click statistics.",
-    "description": "The machine-readable form of the contract described in SPEC.md. Where the two disagree, SPEC.md is the reasoning and this file is the shape; a difference between them is a bug in this file.\n\nEvery response carries an X-Request-Id header, and every log line written while serving the request carries the same value. Quote it in a bug report and the request can be found in the log.\n\nEvery failure shares one body shape, described by the Error schema. A validation failure adds field-level details; nothing else does.",
+    "description": "The machine-readable form of the contract. SPEC.md carries the reasoning behind each rule and this file carries the shape, so the two answer different questions rather than competing. Only this file is checked against the code: tests/unit/openapi.test.ts compares it to the route tables the server assembles, and a route added, renamed, or removed without updating it fails the build.\n\nEvery response carries an X-Request-Id header, and every log line written while serving the request carries the same value. Quote it in a bug report and the request can be found in the log.\n\nEvery failure shares one body shape, described by the Error schema. A validation failure adds field-level details; nothing else does.",
     "license": { "name": "UNLICENSED" }
   },
   "servers": [{ "url": "http://localhost:3000", "description": "Local development" }],

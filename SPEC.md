@@ -213,6 +213,18 @@ npm run migrate
 npm run migrate:test
 ```
 
+Then, before any commit:
+
+```
+npm run verify        typecheck, lint, format:check, and the full suite
+```
+
+`npm run verify` is exactly what CI runs, in the same order, so a green local run
+and a green pipeline cannot mean different things. Its parts are also available
+alone: `npm run typecheck`, `npm run lint`, `npm run format:check`, `npm test`.
+`npm run lint:fix` and `npm run format` write their fixes rather than reporting
+them.
+
 Both `.env` and `.env.test` must exist before any script runs, because
 `node --env-file` fails when the file is missing. Verified: a missing file exits
 immediately with `node: .env: not found`. They are gitignored, and
@@ -342,6 +354,8 @@ url-shortener/
 │   │   ├── AppError.ts              Typed errors carrying a code and a status
 │   │   ├── slug.ts                  Base62 generation and the reserved list
 │   │   ├── validate.ts              Shared parsing and narrowing primitives
+│   │   ├── requestId.ts             Resolves the per-request correlation id
+│   │   ├── audit.ts                 Security-relevant events, to the same log
 │   │   └── logger.ts                Structured JSON logging to stdout
 │   └── modules/
 │       ├── links/
@@ -362,15 +376,29 @@ url-shortener/
 │   │   └── db.ts                    Truncation and fixtures
 │   ├── unit/                        Pure functions only
 │   └── integration/                 One file per module, real HTTP, real database
+├── .github/
+│   ├── workflows/ci.yml             Type check, lint, format, tests, image build
+│   └── labeler.yml                  Path-based pull request labels
+├── docs/
+│   ├── request-lifecycle.md         One request, socket to response
+│   └── adr/                         Architecture decision records
 ├── docker-compose.yml
 ├── Dockerfile
 ├── .env.example
 ├── tsconfig.json
+├── eslint.config.js                 Type-aware lint rules, and why each is set
+├── .prettierrc.json
+├── .prettierignore
+├── openapi.json                     The API contract, machine readable
+├── LICENSE
+├── CONTRIBUTING.md
+├── SECURITY.md
 ├── SPEC.md                          This file
 ├── SPEC-links.md
 ├── SPEC-identity.md
 ├── SPEC-analytics.md
-└── tasks/
+├── THREAT-MODEL.md
+└── tasks/                           Build log, not current behaviour
     ├── plan.md
     └── todo.md
 ```
@@ -518,26 +546,34 @@ export async function createLink(input: CreateLinkInput): Promise<Link> {
 
 ### Status code inventory
 
-Every status this API can return. A code not on this list is a bug.
+Every status this API can return, and what it means. A code not on this list is
+a bug.
 
-| Code | When                                                                      |
-| ---- | ------------------------------------------------------------------------- |
-| 200  | Successful read                                                           |
-| 201  | Link created                                                              |
-| 204  | Link deleted, logout succeeded                                            |
-| 302  | Slug resolved, destination in `Location`                                  |
-| 400  | Validation failure, including a reserved slug and a malformed cursor      |
-| 401  | Missing, unknown, or expired session cookie                               |
-| 403  | Authenticated, but the resource belongs to another user                   |
-| 404  | No such slug, or no such path                                             |
-| 405  | Path exists, method does not; includes an `Allow` header                  |
-| 409  | Custom slug already exists                                                |
-| 410  | Slug exists but has expired                                               |
-| 413  | Request body exceeds 16 KB                                                |
-| 415  | State-changing request without `Content-Type: application/json`           |
-| 429  | Rate limit exceeded; includes `Retry-After`                               |
-| 500  | Unexpected error; details logged, never returned                          |
-| 503  | Health check failed, or slug allocation exhausted; includes `Retry-After` |
+Which statuses each individual route returns is in `openapi.json`, not here, and
+that split is deliberate: one list of meanings stays readable, while a per-route
+matrix in prose is the kind of table that silently stops matching the code. A
+test compares `openapi.json` against the real route table on every run; nothing
+can do that for a paragraph.
+
+| Code | When                                                                                                                       |
+| ---- | -------------------------------------------------------------------------------------------------------------------------- |
+| 200  | Successful read                                                                                                            |
+| 201  | Link created                                                                                                               |
+| 202  | Registration accepted; identical whether or not the address was taken                                                      |
+| 204  | Link deleted, logout succeeded                                                                                             |
+| 302  | Slug resolved, destination in `Location`                                                                                   |
+| 400  | Validation failure, including a reserved slug and a malformed cursor                                                       |
+| 401  | Missing, unknown, or expired session cookie                                                                                |
+| 403  | Authenticated, but the resource belongs to another user                                                                    |
+| 404  | No such slug, or no such path                                                                                              |
+| 405  | Path exists, method does not; includes an `Allow` header                                                                   |
+| 409  | Custom slug already exists                                                                                                 |
+| 410  | Slug exists but has expired                                                                                                |
+| 413  | Request body exceeds 16 KB                                                                                                 |
+| 415  | State-changing request without `Content-Type: application/json`                                                            |
+| 429  | Rate limit exceeded; includes `Retry-After`                                                                                |
+| 500  | Unexpected error; details logged, never returned                                                                           |
+| 503  | Readiness check failed, slug allocation exhausted, or the shared rate-limit counter was unreadable; includes `Retry-After` |
 
 ## Cross-Cutting Requirements
 
@@ -694,7 +730,12 @@ because an unbounded wait against a hung database means the platform sends
   `redirect: 'manual'` so the status code itself can be asserted.
 - **Database:** tests run against a real Postgres database named
   `urlshortener_test` in the same Compose container. Migrations run once before
-  the suite. Each test file truncates the tables it touches in `beforeEach`.
+  the suite. Each test file clears state in `beforeEach` by calling
+  `resetDatabase()`, which drains pending click writes and then truncates every
+  table in a single statement. Both halves matter: a redirect's click write is
+  deliberately not awaited, and truncating in several statements takes
+  overlapping locks, so the two together produced a `40P01 deadlock detected`
+  that failed roughly one run in five, in a different file each time.
   The database is never mocked, because a mocked query proves nothing about SQL.
 - **Location:** `tests/unit/` for pure functions, `tests/integration/` for one
   file per module.
@@ -704,6 +745,11 @@ because an unbounded wait against a hung database means the platform sends
     serialising, and client IP resolution.
   - Integration tests for every endpoint, exercising the full route, service,
     repository, and database path.
+  - A contract test, `tests/unit/openapi.test.ts`, compares `openapi.json`
+    against the route tables the server actually assembles. Adding, renaming, or
+    removing a route without updating the document fails the build. It checks
+    the route inventory and not response bodies, because asserting every schema
+    there would restate the integration tests in a weaker form.
   - No browser or end-to-end tests. There is no frontend.
 - **Coverage bar:** every endpoint has at least one test for the success path
   and one for its primary failure path. A percentage target is deliberately not
@@ -713,6 +759,15 @@ because an unbounded wait against a hung database means the platform sends
   returning 413, an unknown or expired session returning 401, a forged
   left-hand `X-Forwarded-For` entry being ignored, and one user touching
   another user's link returning 403.
+
+### Continuous integration
+
+`.github/workflows/ci.yml` runs the four gates against a real PostgreSQL 16
+service container on every push to `main` and every pull request, then builds
+the production image. Two details are forced by the runner rather than chosen:
+a service container takes no volume mounts, so `docker/init` cannot create the
+test database and `POSTGRES_DB` names it directly; and `.env.test` is gitignored,
+so the workflow writes its own.
 
 ## Boundaries
 
@@ -828,81 +883,28 @@ is the correct value with no proxy in front of the service.
 
 ## Resolved Decisions
 
-Every question that was previously open has been answered. They are kept here,
-with their reasoning, because the module specs cite them as settled and a
-document that lists a decision as both open and already-made cannot be used to
-settle an argument.
+Every decision that was once open is now recorded in `docs/adr/`, one file each,
+with the context that forced it and what it costs.
 
-1. **Redirect status code is `302`.** `301` is cached permanently by browsers,
-   which makes a mistyped destination unfixable and hides every subsequent click
-   from the server. `307` would behave identically here, since the method is
-   `GET` either way, so there is no reason to prefer it.
-2. **Rate limiting uses an in-memory `Map`.** Correct because the service runs
-   as one process. It resets on deploy, which is acceptable for a limiter that
-   is not a security control. Eviction and limits are specified under
-   Cross-Cutting Requirements. Redis is not added.
-3. **Anonymous links stay ownerless.** When `identity` lands, existing links
-   keep a null `owner_id` forever. There is no claim flow, because a claim flow
-   needs a proof of ownership that was never issued.
-4. **Analytics stores a salted hash of the client IP, never the raw value.**
-   The salt is `IP_HASH_SALT`. It exists only to count unique visitors. Rotating
-   it resets those counts, which is recorded in `SPEC-analytics.md`.
-5. **Deployment target is Render.** This is what forces `TRUST_PROXY_HOPS` to be
-   non-zero in production, because Render fronts every service with its own load
-   balancers and with Cloudflare. Fly.io and Railway are equivalent and have the
-   same proxy consideration.
+They were moved out of this document because two of them had quietly become
+false while still being asserted here. A decision written as a list item has
+nowhere to say it was superseded; a record has a status line, and the record that
+replaced it is named at the top.
 
-## Decision Record: Single Process, No Load Balancer
+| #                                                              | Decision                                 | Status             |
+| -------------------------------------------------------------- | ---------------------------------------- | ------------------ |
+| [0001](docs/adr/0001-redirect-with-302.md)                     | Redirect with `302`, never `301`         | Accepted           |
+| [0002](docs/adr/0002-in-memory-rate-limiting.md)               | Rate limiting in process memory          | Superseded by 0007 |
+| [0003](docs/adr/0003-anonymous-links-stay-ownerless.md)        | Anonymous links stay ownerless           | Superseded by 0006 |
+| [0004](docs/adr/0004-hash-the-client-ip.md)                    | Store a salted hash of the client IP     | Accepted           |
+| [0005](docs/adr/0005-single-process-no-load-balancer.md)       | One process, no load balancer of our own | Accepted           |
+| [0006](docs/adr/0006-require-a-session-to-create-a-link.md)    | Creating a link requires a session       | Accepted           |
+| [0007](docs/adr/0007-shared-rate-limit-counter-in-postgres.md) | Count API rate limits in Postgres        | Accepted           |
+| [0008](docs/adr/0008-split-liveness-from-readiness.md)         | Answer liveness and readiness separately | Accepted           |
+| [0009](docs/adr/0009-thread-the-request-id-explicitly.md)      | Pass the correlation id explicitly       | Accepted           |
+| [0010](docs/adr/0010-openapi-as-the-checked-contract.md)       | OpenAPI as the checked contract          | Accepted           |
 
-Adding a load balancer was raised and declined. The decision is recorded here
-because several later choices depend on it, and reversing it silently would
-leave those choices quietly wrong.
-
-### What this decision permits
-
-- Rate limiting lives in process memory. One process means one counter.
-- Any future cache may live in process memory for the same reason.
-- `node:cluster` is not used. The process is single-threaded and single-process.
-
-It does **not** permit reading the client IP from `socket.remoteAddress`. That
-was the original wording and it was wrong. The decision removes load balancers
-_of our own_; it does nothing about the platform's. Render routes every request
-through its own load balancers and through Cloudflare, so the socket address in
-production belongs to an edge node. Client IP resolution is specified under
-Cross-Cutting Requirements and applies regardless of this decision.
-
-### What must change first if this is ever reversed
-
-These are the failure modes that a second instance introduces. Each one is
-silent, which is why they are written down rather than left to be discovered.
-
-1. **Rate limiting stops working as specified.** Two instances keep two
-   independent counters, so the effective limit doubles. A shared store, most
-   likely Redis, becomes mandatory, and that breaks the single-dependency rule.
-2. **The client IP becomes wrong.** Behind a proxy, `socket.remoteAddress` is
-   the proxy. The real client sits in `X-Forwarded-For`, which is
-   caller-supplied and trivially spoofed unless the number of trusted proxy hops
-   is fixed and enforced. Analytics hashes the visitor IP, so a wrong or
-   spoofable value corrupts unique-visitor counts and the rate limiter together.
-3. **Rolling restarts drop in-flight requests.** Graceful shutdown becomes
-   mandatory: stop accepting connections, drain what is open, close the pool,
-   then exit.
-4. **Health checks gain real consequences.** They stop being informational and
-   start deciding whether an instance receives traffic, and whether it is
-   restarted. That is why the two questions are answered separately:
-   `/health/ready` decides rotation, `/health/live` decides restarts, and
-   conflating them turns a database outage into a restart loop.
-5. **The deployment target changes.** The Render free tier gives one instance
-   and no control over balancing. Multi-instance means a VPS running Compose, or
-   a paid plan.
-
-### If revisited, the goal is
-
-Learning the failure modes above by causing them deliberately: killing an
-instance mid-request, watching the rate limit double, observing the wrong IP
-reach analytics, and then fixing each one. The deliverable is a written record
-of what broke and why, not a throughput number.
-
-The natural place for that work is a separate phase after `analytics` is
-complete, using Nginx in front of two application containers. It is not part of
-this spec.
+The deployment target is Render, which is what forces `TRUST_PROXY_HOPS` to be
+non-zero in production: Render fronts every service with its own load balancers
+and with Cloudflare. Fly.io and Railway are equivalent and carry the same proxy
+consideration.
