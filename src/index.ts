@@ -3,6 +3,7 @@ import type { Server } from 'node:http';
 import { env } from './config/env.ts';
 import { saltFingerprint } from './lib/ipHash.ts';
 import { log } from './lib/logger.ts';
+import { startClickRetention } from './modules/analytics/analytics.retention.ts';
 import { analyticsRoutes } from './modules/analytics/analytics.routes.ts';
 import { identityRoutes } from './modules/identity/identity.routes.ts';
 import { linkRoutes } from './modules/links/links.routes.ts';
@@ -37,11 +38,17 @@ function main(): void {
     ...analyticsRoutes,
   ]);
 
+  // Click events expire. The timer is unreferenced, so it never delays exit, and
+  // it is started here rather than inside the analytics module so that importing
+  // that module in a test does not schedule deletions.
+  startClickRetention();
+
   server.listen(config.port, () => {
     log('info', 'server listening', {
       port: config.port,
       env: config.nodeEnv,
       baseUrl: config.baseUrl,
+      clickRetentionDays: config.clickRetentionDays,
 
       // A digest of the salt, never the salt. Rotating IP_HASH_SALT resets
       // unique-visitor counts, so this is what makes a discontinuity in those

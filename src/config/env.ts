@@ -40,6 +40,16 @@ export type Env = {
    */
   readonly databaseSsl: boolean;
   /**
+   * PEM-encoded certificate authority bundle for the database connection.
+   *
+   * Undefined means Node's built-in trust store is used. Managed providers
+   * usually sign their database certificates with their own authority, which is
+   * not in that store, so the bundle they publish has to be supplied here.
+   * Without it the connection to such a provider fails to verify, which is the
+   * intended outcome: an unverified peer is not the database.
+   */
+  readonly databaseCaCert: string | undefined;
+  /**
    * How many trusted proxies sit in front of this service.
    *
    * `0` means the socket address is the client. Above `0`, the client address
@@ -48,6 +58,16 @@ export type Env = {
   readonly trustProxyHops: number;
   /** Salt for hashing visitor IP addresses. Never logged. */
   readonly ipHashSalt: string;
+  /**
+   * How long click events are kept, in days.
+   *
+   * Retention is the deletion path for visitor data. A click row is a hashed
+   * address, a referrer and a user agent, with nothing that identifies the
+   * person it came from, so there is no request a visitor could make to have
+   * their own rows found and removed. An expiry is what bounds that: data the
+   * service no longer holds cannot be leaked, subpoenaed, or correlated later.
+   */
+  readonly clickRetentionDays: number;
   readonly rateLimitMax: number;
   readonly rateLimitWindowMs: number;
   readonly sessionTtlSeconds: number;
@@ -158,6 +178,12 @@ export function loadEnv(source: Source): Env {
     max: 10,
   });
 
+  const clickRetentionDays = requireInteger(source, 'CLICK_RETENTION_DAYS', issues, {
+    min: 1,
+    max: 3_650,
+    fallback: 90,
+  });
+
   const rateLimitMax = requireInteger(source, 'RATE_LIMIT_MAX', issues, {
     min: 1,
     max: 1_000_000,
@@ -203,6 +229,23 @@ export function loadEnv(source: Source): Env {
   const databaseSsl =
     sslRaw === undefined || sslRaw === '' ? nodeEnv === 'production' : sslRaw === 'true';
 
+  // Read as a literal PEM rather than a path, because the platforms this runs on
+  // inject secrets as environment values and have no filesystem to put a file
+  // on. A newline-escaped value is accepted too: a single-line environment
+  // variable is the only shape some dashboards allow, and a PEM whose newlines
+  // did not survive that trip fails to parse for a reason nobody enjoys finding.
+  const caRaw = source['DATABASE_CA_CERT']?.trim();
+  const databaseCaCert =
+    caRaw === undefined || caRaw === '' ? undefined : caRaw.replace(/\\n/g, '\n');
+  if (databaseCaCert !== undefined && !databaseCaCert.includes('-----BEGIN CERTIFICATE-----')) {
+    issues.push('DATABASE_CA_CERT must be a PEM-encoded certificate.');
+  }
+  // A bundle supplied while TLS is off is ignored rather than rejected. That
+  // combination is what running the production image against the local database
+  // looks like, with the platform's variables still in the environment, and it
+  // is not unsafe: refusing to start there would be a footgun over a setting
+  // nothing reads.
+
   // ENABLE_UNAUTHENTICATED_LINK_ADMIN used to be validated here. It gated the
   // listing and deletion routes while they had no ownership check. The identity
   // module now authenticates those routes properly, so the flag has been
@@ -218,8 +261,10 @@ export function loadEnv(source: Source): Env {
     baseUrl: baseUrlRaw.replace(/\/+$/, ''),
     databaseUrl,
     databaseSsl,
+    databaseCaCert,
     trustProxyHops,
     ipHashSalt,
+    clickRetentionDays,
     rateLimitMax,
     rateLimitWindowMs,
     sessionTtlSeconds,

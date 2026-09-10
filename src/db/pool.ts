@@ -40,16 +40,29 @@ function createPool(): pg.Pool {
     connectionString: config.databaseUrl,
 
     // Managed providers require TLS, and `pg` does not enable it implicitly.
-    // `rejectUnauthorized` is false because these providers front the database
-    // with a certificate signed by their own authority, which the container has
-    // no root for. The connection is still encrypted.
+    //
+    // The certificate is verified. This previously set `rejectUnauthorized` to
+    // false, on the reasoning that a managed provider signs with its own
+    // authority and the container has no root for it. That reasoning describes
+    // the problem correctly and then solves it by trusting whoever answers:
+    // encryption without verification stops a passive listener and does nothing
+    // about an active one, which can present its own certificate and read every
+    // password hash and session id on the wire. The provider's own CA bundle
+    // goes in DATABASE_CA_CERT instead, which is the part that was missing.
     //
     // Driven by its own setting rather than by NODE_ENV. Tying TLS to the
     // environment name made the production image impossible to run against a
     // local database: it demanded TLS from a server that has none, and the
     // health check reported the database as down. Verified by running the built
     // image against the Compose database.
-    ...(config.databaseSsl ? { ssl: { rejectUnauthorized: false } } : {}),
+    ...(config.databaseSsl
+      ? {
+          ssl: {
+            rejectUnauthorized: true,
+            ...(config.databaseCaCert === undefined ? {} : { ca: config.databaseCaCert }),
+          },
+        }
+      : {}),
 
     // A single-process service on a free-tier database. More connections than
     // the database allows turns into connection errors under load, not speed.

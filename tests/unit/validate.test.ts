@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 
 import {
   isRecord,
+  MAX_URL_LENGTH,
   parseBoundedInteger,
   parseCustomSlug,
   parseDestinationUrl,
@@ -54,7 +55,10 @@ describe('parseDestinationUrl', () => {
   const options = { field: 'url', baseUrl: BASE_URL };
 
   it('accepts http and https', () => {
-    assert.equal(expectOk(parseDestinationUrl('http://example.com', options)), 'http://example.com');
+    assert.equal(
+      expectOk(parseDestinationUrl('http://example.com', options)),
+      'http://example.com/',
+    );
     assert.equal(
       expectOk(parseDestinationUrl('https://example.com/a/b?c=d#e', options)),
       'https://example.com/a/b?c=d#e',
@@ -71,6 +75,28 @@ describe('parseDestinationUrl', () => {
     ]) {
       expectIssue(parseDestinationUrl(dangerous, options), 'url');
     }
+  });
+
+  it('returns the parser serialization, not the caller string', () => {
+    // The parser strips tab, carriage return and newline while parsing, so this
+    // value validates. Returning the caller's string would persist the control
+    // characters, and they would later be written into a Location header.
+    const smuggled = 'https://example.com/a\r\nX-Injected:\tyes';
+    const result = expectOk(parseDestinationUrl(smuggled, options));
+
+    assert.equal(result, 'https://example.com/aX-Injected:yes');
+    assert.ok(!/[\r\n\t]/.test(result), `control characters survived: ${JSON.stringify(result)}`);
+  });
+
+  it('rejects a URL that only exceeds the length limit once normalized', () => {
+    // A raw space is one character in, three out, so a value under the cap on
+    // the way in can be over it in the form that reaches the column. The
+    // trailing character matters: the parser trims whitespace at either end of
+    // the input, so the spaces have to sit inside the path.
+    const spaced = `https://example.com/${' '.repeat(1000)}x`;
+
+    assert.ok(spaced.length <= MAX_URL_LENGTH, 'input should be under the cap');
+    expectIssue(parseDestinationUrl(spaced, options), 'url');
   });
 
   it('rejects a relative URL, which has no host', () => {
@@ -97,7 +123,10 @@ describe('parseDestinationUrl', () => {
 
   it('ignores a malformed baseUrl rather than blocking every link', () => {
     const broken = { field: 'url', baseUrl: 'not a url' };
-    assert.equal(expectOk(parseDestinationUrl('https://example.com', broken)), 'https://example.com');
+    assert.equal(
+      expectOk(parseDestinationUrl('https://example.com', broken)),
+      'https://example.com/',
+    );
   });
 });
 
@@ -181,7 +210,7 @@ describe('parseCreateLinkInput', () => {
 
   it('accepts a minimal body', () => {
     const input = expectOk(parseCreateLinkInput({ url: 'https://example.com' }, options));
-    assert.equal(input.url, 'https://example.com');
+    assert.equal(input.url, 'https://example.com/');
     assert.equal(input.customSlug, undefined);
     assert.equal(input.expiresAt, undefined);
   });

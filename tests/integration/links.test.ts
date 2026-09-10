@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, it } from 'node:test';
 
 import { closePool } from '../../src/db/pool.ts';
+import { identityRoutes } from '../../src/modules/identity/identity.routes.ts';
 import { linkRoutes } from '../../src/modules/links/links.routes.ts';
-import { truncateUsers } from '../helpers/auth.ts';
+import { registerAccount, truncateUsers, type TestAccount } from '../helpers/auth.ts';
 import { insertLink, truncateLinks } from '../helpers/db.ts';
 import { startTestServer, type TestServer } from '../helpers/server.ts';
 
@@ -13,13 +14,24 @@ import { startTestServer, type TestServer } from '../helpers/server.ts';
 
 let server: TestServer;
 
+/**
+ * The account every test in this file creates links as.
+ *
+ * Creating a link requires a session, so the identity routes are mounted here
+ * too and a fresh account is registered per test. Fresh rather than shared,
+ * because `truncateUsers` cascades to links and would leave a stale cookie
+ * pointing at a deleted row.
+ */
+let account: TestAccount;
+
 before(async () => {
-  server = await startTestServer(linkRoutes);
+  server = await startTestServer([...linkRoutes, ...identityRoutes]);
 });
 
 beforeEach(async () => {
   await truncateUsers();
   await truncateLinks();
+  account = await registerAccount(server);
 });
 
 after(async () => {
@@ -50,7 +62,7 @@ type ErrorBody = {
 function createLink(body: unknown): Promise<Response> {
   return server.fetch('/api/links', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', cookie: account.cookie },
     body: JSON.stringify(body),
   });
 }
@@ -179,18 +191,53 @@ describe('POST /api/links', () => {
 
   it('rejects a state-changing request that does not declare JSON', async () => {
     // An HTML form cannot express application/json as an enctype, so this check
-    // is what stops a cross-site form post that carries the session cookie.
+    // is what stops a cross-site form post that carries the session cookie. The
+    // session is sent here on purpose: without it the request is refused for
+    // being unauthenticated and this check is never reached, which is the exact
+    // case the protection exists for.
     const response = await server.fetch('/api/links', {
       method: 'POST',
-      headers: { 'content-type': 'text/plain' },
+      headers: { 'content-type': 'text/plain', cookie: account.cookie },
       body: JSON.stringify({ url: 'https://example.com' }),
     });
 
     assert.equal(response.status, 415);
   });
 
-  it('creates an anonymous link when no session is sent', async () => {
-    const response = await createLink({ url: 'https://example.com/anon' });
+  it('refuses to create a link when no session is sent', async () => {
+    // Anonymous creation used to be allowed, and it made every link
+    // unattributable: a phishing destination on this domain with nobody to
+    // suspend. The session requirement is checked before the body is parsed, so
+    // an unauthenticated caller cannot use validation errors to probe either.
+    const response = await server.fetch('/api/links', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ url: 'https://example.com/anon' }),
+    });
+
+    assert.equal(response.status, 401);
+    const body = (await response.json()) as ErrorBody;
+    assert.equal(body.error.code, 'UNAUTHENTICATED');
+  });
+
+  it('records the creating account as the owner', async () => {
+    const response = await createLink({ url: 'https://example.com/owned' });
     assert.equal(response.status, 201);
+
+    const { slug } = (await response.json()) as LinkBody;
+
+    // The owner is not in the response, so it is proven the way a user would
+    // see it: the link appears in that account's listing and a second account
+    // cannot delete it.
+    const listed = await server.fetch('/api/links', { headers: { cookie: account.cookie } });
+    const page = (await listed.json()) as { data: LinkBody[] };
+    assert.ok(page.data.some((link) => link.slug === slug));
+
+    const other = await registerAccount(server);
+    const forbidden = await server.fetch(`/api/links/${slug}`, {
+      method: 'DELETE',
+      headers: { cookie: other.cookie },
+    });
+    assert.equal(forbidden.status, 403);
   });
 });

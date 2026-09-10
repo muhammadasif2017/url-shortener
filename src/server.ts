@@ -9,11 +9,13 @@ import {
   toErrorResponse,
 } from './http/errorHandler.ts';
 import { createRateLimiter } from './http/rateLimit.ts';
+import { checkSharedLimit } from './http/sharedRateLimit.ts';
 import { readJsonBody } from './http/readBody.ts';
 import { json, send } from './http/respond.ts';
 import { createRouter } from './http/router.ts';
 import { AppError } from './lib/AppError.ts';
 import { resolveClientIp } from './lib/clientIp.ts';
+import { describeError, log } from './lib/logger.ts';
 
 /**
  * Server assembly.
@@ -44,6 +46,30 @@ const CREDENTIAL_PATHS: ReadonlySet<string> = new Set([
   '/api/auth/login',
   '/api/auth/register',
 ]);
+
+/**
+ * Requests permitted per window on the redirect path, per instance.
+ *
+ * Generous, because this is not a limit on people following links. It exists
+ * because every redirect writes a click row, so an unmetered redirect route lets
+ * one host with one valid slug drive unbounded write volume at the database.
+ */
+const REDIRECT_RATE_LIMIT_MAX = 600;
+
+/** Window for the redirect path: one minute. */
+const REDIRECT_RATE_LIMIT_WINDOW_MS = 60 * 1000;
+
+/**
+ * Builds the refusal sent when a limit is reached.
+ *
+ * @param retryAfterSeconds - Seconds until the window resets.
+ * @returns The error to send.
+ */
+function tooManyRequests(retryAfterSeconds: number): AppError {
+  return new AppError('RATE_LIMITED', 'Too many requests.', 429, {
+    headers: { 'Retry-After': String(retryAfterSeconds) },
+  });
+}
 
 /**
  * The health route.
@@ -82,7 +108,25 @@ const healthRoutes: RouteTable = [
  * @param pathname - The request path.
  * @returns `true` when the limiter applies.
  */
-function isRateLimited(pathname: string): boolean {
+/**
+ * Whether a path is counted against the shared, cross-instance limit.
+ *
+ * Only the API paths. The redirect path is limited too, but in process memory,
+ * and the split is deliberate rather than an unfinished migration.
+ *
+ * The shared counter costs a database round trip on every request it decides.
+ * The API paths are low volume and every one of them already talks to the
+ * database, so the round trip is noise there and correctness across instances is
+ * worth having: a credential limit that multiplies by instance count is not a
+ * credential limit.
+ *
+ * The redirect path is the opposite case on both counts. It is the hot path, and
+ * what its limit protects is the database itself from click-write amplification.
+ * A per-instance cap still bounds that at instances times the cap, which is the
+ * property that matters, and paying a synchronous round trip to a database in
+ * order to protect that database from writes would be self-defeating.
+ */
+function isSharedRateLimited(pathname: string): boolean {
   return pathname.startsWith('/api/');
 }
 
@@ -126,6 +170,16 @@ export type ServerOptions = {
   readonly rateLimit?: { readonly max: number; readonly windowMs: number };
   /** Overrides for the stricter credential-endpoint limit. */
   readonly authRateLimit?: { readonly max: number; readonly windowMs: number };
+  /**
+   * Prefix applied to every shared rate-limit bucket this server writes.
+   *
+   * The shared counters live in a table rather than in this process, so two
+   * servers using the same key count each other's requests. That is the entire
+   * point in production and a problem in tests, where every server binds to
+   * loopback and would therefore share one bucket with every other test. A
+   * namespace keeps each test's counters to itself; production leaves it unset.
+   */
+  readonly rateLimitNamespace?: string;
 };
 
 /**
@@ -143,20 +197,29 @@ export function createAppServer(
   const router = createRouter([...healthRoutes, ...moduleRoutes]);
   const config = env();
 
-  const rateLimiter = createRateLimiter({
+  const namespace = options.rateLimitNamespace ?? '';
+
+  const apiLimit = {
     max: options.rateLimit?.max ?? config.rateLimitMax,
     windowMs: options.rateLimit?.windowMs ?? config.rateLimitWindowMs,
-  });
+  };
 
-  // Credential endpoints get their own, far stricter limiter, and it is not a
+  // Credential endpoints get their own, far stricter limit, and it is not a
   // nicety. Each attempt runs scrypt, which costs about 33 MiB and a tenth of a
   // second of thread-pool work. The general limit of sixty per minute would let
   // one address spend six seconds of hashing per minute, on a service that has
   // a single event loop to serve every redirect. It also slows credential
   // stuffing from thousands of guesses an hour to forty.
-  const authRateLimiter = createRateLimiter({
+  const authLimit = {
     max: options.authRateLimit?.max ?? AUTH_RATE_LIMIT_MAX,
     windowMs: options.authRateLimit?.windowMs ?? AUTH_RATE_LIMIT_WINDOW_MS,
+  };
+
+  // The redirect path's limiter, and the only one still counting in memory. See
+  // `isSharedRateLimited` for why this one does not belong in the database.
+  const redirectRateLimiter = createRateLimiter({
+    max: REDIRECT_RATE_LIMIT_MAX,
+    windowMs: REDIRECT_RATE_LIMIT_WINDOW_MS,
   });
 
   const server = createServer((request, response) => {
@@ -209,23 +272,53 @@ export function createAppServer(
       config.trustProxyHops,
     );
 
-    if (isRateLimited(url.pathname)) {
-      const limiter = CREDENTIAL_PATHS.has(url.pathname) ? authRateLimiter : rateLimiter;
-      const decision = limiter.check(clientIp);
-      if (!decision.allowed) {
-        send(
-          response,
-          toErrorResponse(
-            new AppError('RATE_LIMITED', 'Too many requests.', 429, {
-              headers: { 'Retry-After': String(decision.retryAfterSeconds) },
-            }),
-            { method, path: url.pathname },
-          ),
-          method,
-        );
-        if (!request.readableEnded) request.resume();
-        return;
+    const limited = await applyRateLimit(url.pathname, clientIp);
+    if (limited !== undefined) {
+      send(response, toErrorResponse(limited, { method, path: url.pathname }), method);
+      if (!request.readableEnded) request.resume();
+      return;
+    }
+
+    /**
+     * Counts this request against whichever limit governs its path.
+     *
+     * @param pathname - The request path.
+     * @param address - The resolved client address.
+     * @returns The error to send, or `undefined` when the request may proceed.
+     */
+    async function applyRateLimit(
+      pathname: string,
+      address: string,
+    ): Promise<AppError | undefined> {
+      if (isSharedRateLimited(pathname)) {
+        const credential = CREDENTIAL_PATHS.has(pathname);
+        const limit = credential ? authLimit : apiLimit;
+        const bucket = `${namespace}${credential ? 'auth' : 'api'}:${address}`;
+
+        let decision;
+        try {
+          decision = await checkSharedLimit(bucket, limit);
+        } catch (error) {
+          // Fail closed. The counter lives in the same database every route
+          // behind this point needs, so a counter that cannot be read is a
+          // database that cannot serve the request either. Answering 503 says
+          // that plainly; allowing the request through would remove the limit at
+          // exactly the moment the service is least able to absorb load.
+          log('error', 'rate limit check failed', {
+            path: pathname,
+            ...describeError(error),
+          });
+          return new AppError('SERVICE_UNAVAILABLE', 'Try again shortly.', 503, {
+            headers: { 'Retry-After': '1' },
+          });
+        }
+
+        return decision.allowed ? undefined : tooManyRequests(decision.retryAfterSeconds);
       }
+
+      // Everything else is the redirect path, counted in this process.
+      const decision = redirectRateLimiter.check(address);
+      return decision.allowed ? undefined : tooManyRequests(decision.retryAfterSeconds);
     }
 
     let body: unknown;
@@ -252,6 +345,7 @@ export function createAppServer(
       query: url.searchParams,
       headers: request.headers,
       clientIp,
+      rateLimitNamespace: namespace,
       ...(body === undefined ? {} : { body }),
     };
 

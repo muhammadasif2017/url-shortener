@@ -1,22 +1,13 @@
-import { randomBytes } from 'node:crypto';
 import { unauthenticated } from '../../http/auth.ts';
 
 import { env } from '../../config/env.ts';
 import { AppError } from '../../lib/AppError.ts';
 import { getDummyHash, hashPassword, verifyPassword } from '../../lib/password.ts';
+import { createSessionId } from '../../lib/sessionId.ts';
 import * as repository from './identity.repository.ts';
 import type { CredentialsInput, Session, User } from './identity.schema.ts';
 
 /** Business rules for accounts and sessions. */
-
-/**
- * Session id length in bytes.
- *
- * 32 bytes of CSPRNG output. Guessing one is not a threat model worth
- * considering at that size, which is the entire security argument for an opaque
- * identifier: there is no signature to forge because there is nothing to sign.
- */
-const SESSION_ID_BYTES = 32;
 
 /**
  * Registers an account and signs it in.
@@ -85,8 +76,15 @@ export async function login(
  * @returns The stored session.
  */
 async function createSession(userId: string): Promise<Session> {
-  const id = randomBytes(SESSION_ID_BYTES).toString('base64url');
-  const session = await repository.insertSession(id, userId, env().sessionTtlSeconds);
+  // The identifier is created here and handed straight to the repository, which
+  // stores only its hash and hands the identifier back untouched. This function
+  // is therefore the only place the raw value exists, and its one destination is
+  // the cookie.
+  const session = await repository.insertSession(
+    createSessionId(),
+    userId,
+    env().sessionTtlSeconds,
+  );
 
   // Opportunistic cleanup, on a path that is already writing. Expired rows are
   // unreachable but not free, and this avoids adding a scheduler for one

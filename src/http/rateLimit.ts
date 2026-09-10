@@ -29,10 +29,11 @@ export type RateLimitOptions = {
   /** Window length in milliseconds. */
   readonly windowMs: number;
   /**
-   * Hard cap on tracked keys. Reaching it evicts the oldest entry.
+   * Hard cap on tracked keys. Reaching it evicts an entry.
    *
    * The cap matters more than it looks. Without one, an attacker rotating
-   * addresses fills memory faster than any window expires them.
+   * addresses fills memory faster than any window expires them. Which entry the
+   * cap sacrifices matters just as much: see `createRateLimiter`.
    */
   readonly maxEntries?: number;
 };
@@ -66,15 +67,47 @@ const DEFAULT_MAX_ENTRIES = 10_000;
 /**
  * Creates a rate limiter.
  *
+ * Entries are held in two maps rather than one, and the split is what makes the
+ * cap safe. A key that has not yet reached the limit is evictable; a key that
+ * has reached it is not, until nothing evictable is left.
+ *
+ * A single map evicted in insertion order can be emptied of the entry that
+ * matters. An attacker sending one request from each of `maxEntries` addresses
+ * to the login route pushes out the window belonging to the account they are
+ * attacking, because that window was inserted earlier than the flood. The
+ * victim's next attempt then opens a fresh window and starts counting from one,
+ * so the limit never fires however many attempts are made. Every request in the
+ * flood is itself allowed, since each one opens a new window, which makes the
+ * flood cheap.
+ *
+ * Evicting by soonest expiry has the same hole and is easier to mistake for a
+ * fix: with one window length, the oldest window is also the one expiring
+ * first, so it is still the victim's.
+ *
+ * Protecting keys that are at the limit raises the price. Clearing a protected
+ * entry costs `max` requests per key across the whole cap rather than one, and
+ * every one of those requests is refused. Memory is still bounded, because a
+ * protected entry is evicted once nothing else can be.
+ *
+ * This is a cost increase, not an impossibility proof. An attacker willing to
+ * spend `maxEntries × max` refused requests still fills the protected map and
+ * reaches a real window. The fix that removes the class rather than pricing it
+ * is a shared counter store, which this module is deliberately not.
+ *
  * @param options - Limit, window, and entry cap.
  * @returns The limiter.
  */
 export function createRateLimiter(options: RateLimitOptions): RateLimiter {
   const maxEntries = options.maxEntries ?? DEFAULT_MAX_ENTRIES;
-  const windows = new Map<string, Window>();
+
+  /** Keys still under the limit. Evicted first, oldest inserted first. */
+  const underLimit = new Map<string, Window>();
+
+  /** Keys that have reached the limit. Evicted only when nothing else can be. */
+  const atLimit = new Map<string, Window>();
 
   /**
-   * Removes expired entries.
+   * Removes expired entries from both maps.
    *
    * Runs on write rather than on a timer. A timer would keep the process alive
    * and would run even when the service is idle and has nothing to sweep.
@@ -82,30 +115,69 @@ export function createRateLimiter(options: RateLimitOptions): RateLimiter {
    * @param now - Current time.
    */
   function sweep(now: number): void {
-    for (const [key, window] of windows) {
-      if (window.expiresAt <= now) windows.delete(key);
+    for (const map of [underLimit, atLimit]) {
+      for (const [key, window] of map) {
+        if (window.expiresAt <= now) map.delete(key);
+      }
     }
+  }
+
+  /**
+   * Drops one entry so a new key fits, preferring one that is under the limit.
+   *
+   * Map iteration order is insertion order, so the first key of `underLimit` is
+   * its oldest. Dropping an entry gives that client a fresh window, which is the
+   * correct failure direction for a key under the limit: over-permissive beats
+   * running out of memory.
+   *
+   * When every tracked key is at the limit, the choice matters again, and
+   * insertion order is the wrong answer for the same reason it was in the map
+   * this replaced: the longest-standing block is the one worth keeping. The
+   * entry expiring soonest is dropped instead, since it is closest to
+   * disappearing on its own. Reaching this branch costs an attacker `max`
+   * refused requests for every key they have to fill, rather than one.
+   *
+   * The scan is linear, and runs only when nothing evictable is left.
+   */
+  function evictOne(): void {
+    if (underLimit.size > 0) {
+      const oldest = underLimit.keys().next();
+      if (oldest.done !== true) underLimit.delete(oldest.value);
+      return;
+    }
+
+    let soonestKey: string | undefined;
+    let soonestExpiry = Number.POSITIVE_INFINITY;
+    for (const [key, window] of atLimit) {
+      if (window.expiresAt < soonestExpiry) {
+        soonestExpiry = window.expiresAt;
+        soonestKey = key;
+      }
+    }
+    if (soonestKey !== undefined) atLimit.delete(soonestKey);
   }
 
   return {
     check(key, now = Date.now()) {
-      const existing = windows.get(key);
+      const existing = atLimit.get(key) ?? underLimit.get(key);
 
       if (existing === undefined || existing.expiresAt <= now) {
-        // A new key, or a window that has rolled over. Sweep first so the size
-        // check below counts only live entries.
+        // A new key, or a window that has rolled over. Delete both copies before
+        // reinserting: a rolled-over window may be sitting in either map, and a
+        // key present in both would be counted twice and never expire.
+        underLimit.delete(key);
+        atLimit.delete(key);
+
+        // Sweep first so the size check below counts only live entries.
         sweep(now);
 
-        if (windows.size >= maxEntries) {
-          // Map iteration order is insertion order, so the first key is the
-          // oldest. Dropping it means that client gets a fresh window, which is
-          // the correct failure direction: over-permissive beats running out of
-          // memory.
-          const oldest = windows.keys().next();
-          if (oldest.done !== true) windows.delete(oldest.value);
-        }
+        if (underLimit.size + atLimit.size >= maxEntries) evictOne();
 
-        windows.set(key, { count: 1, expiresAt: now + options.windowMs });
+        // A limit of one is reached by the request that opens the window, so
+        // that window is protected from the moment it exists.
+        const window: Window = { count: 1, expiresAt: now + options.windowMs };
+        if (window.count >= options.max) atLimit.set(key, window);
+        else underLimit.set(key, window);
 
         return {
           allowed: true,
@@ -115,6 +187,14 @@ export function createRateLimiter(options: RateLimitOptions): RateLimiter {
       }
 
       existing.count += 1;
+
+      // Promote on reaching the limit, not on exceeding it. The request that
+      // spends the last of the allowance is the one that makes this key worth
+      // protecting; waiting one more request leaves a gap an attacker can aim at.
+      if (existing.count >= options.max && !atLimit.has(key)) {
+        underLimit.delete(key);
+        atLimit.set(key, existing);
+      }
 
       const retryAfterSeconds = Math.max(1, Math.ceil((existing.expiresAt - now) / 1000));
 
@@ -126,7 +206,7 @@ export function createRateLimiter(options: RateLimitOptions): RateLimiter {
     },
 
     size() {
-      return windows.size;
+      return underLimit.size + atLimit.size;
     },
   };
 }
