@@ -1,6 +1,7 @@
 import pg from 'pg';
 
 import { env } from '../config/env.ts';
+import { describeError, log } from '../lib/logger.ts';
 
 /**
  * The shared PostgreSQL connection pool.
@@ -36,7 +37,7 @@ types.setTypeParser(types.builtins.INT8, (value) => value);
 function createPool(): pg.Pool {
   const config = env();
 
-  return new Pool({
+  const created = new Pool({
     connectionString: config.databaseUrl,
 
     // Managed providers require TLS, and `pg` does not enable it implicitly.
@@ -73,6 +74,30 @@ function createPool(): pg.Pool {
     connectionTimeoutMillis: 5_000,
     idleTimeoutMillis: 30_000,
   });
+
+  // Without this handler the process dies when the database goes away.
+  //
+  // `pg` emits `error` on the pool when a client that is sitting idle loses its
+  // connection, and an `error` event with no listener is an uncaught exception
+  // in Node. Every restart, failover, or `pg_terminate_backend` therefore killed
+  // the service outright, with a stack trace and exit code 1, rather than
+  // degrading. Both instances died within a second of each other during the
+  // multi-instance experiment that stopped the database, which is how this was
+  // found; see docs/multi-instance.md.
+  //
+  // That failure defeated the whole point of splitting liveness from readiness.
+  // Readiness exists to report "this instance cannot serve right now" so a load
+  // balancer removes it and puts it back when the dependency returns. A process
+  // that exits has no readiness to report.
+  //
+  // Logging is the entire response, deliberately. The pool discards the broken
+  // client on its own and opens a new one on the next request, so there is
+  // nothing here to repair. What matters is that the event has a listener.
+  created.on('error', (error: unknown) => {
+    log('error', 'idle database client failed', describeError(error));
+  });
+
+  return created;
 }
 
 let instance: pg.Pool | undefined;

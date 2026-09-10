@@ -20,6 +20,8 @@ There is a lot of writing in this repository. This table is the index.
 | What an attacker could do              | [`THREAT-MODEL.md`](THREAT-MODEL.md)                                                                            |
 | How to work on it                      | [`CONTRIBUTING.md`](CONTRIBUTING.md)                                                                            |
 | How it was built, step by step         | [`tasks/`](tasks/) — a build log, not current behaviour                                                         |
+| How to report a vulnerability          | [`SECURITY.md`](SECURITY.md)                                                                                    |
+| What breaks with two instances         | [`docs/multi-instance.md`](docs/multi-instance.md)                                                              |
 
 Start with the request lifecycle. It names the file that owns each step, and the
 rest of the codebase stops being a maze after it.

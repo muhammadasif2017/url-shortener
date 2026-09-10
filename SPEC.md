@@ -369,7 +369,8 @@ url-shortener/
 │   ├── 001_create_links.sql
 │   └── ...                          Numbered, applied in order, never edited
 ├── scripts/
-│   └── migrate.ts                   Applies pending migrations, records them
+│   ├── migrate.ts                   Applies pending migrations, records them
+│   └── experiments/                 The multi-instance experiments, runnable
 ├── tests/
 │   ├── helpers/
 │   │   ├── server.ts                Starts the app on an ephemeral port
@@ -381,7 +382,10 @@ url-shortener/
 │   └── labeler.yml                  Path-based pull request labels
 ├── docs/
 │   ├── request-lifecycle.md         One request, socket to response
+│   ├── multi-instance.md            What broke when two instances ran
 │   └── adr/                         Architecture decision records
+├── nginx/nginx.conf                 Proxy for the multi-instance experiments
+├── docker-compose.multi.yml         nginx plus two instances, an instrument
 ├── docker-compose.yml
 ├── Dockerfile
 ├── .env.example

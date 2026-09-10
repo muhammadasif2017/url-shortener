@@ -26,7 +26,10 @@
     "migrate:status": "node --env-file=.env --experimental-strip-types scripts/migrate.ts status",
     "migrate:new": "node --experimental-strip-types scripts/migrate.ts new",
     "db:up": "docker compose up -d",
-    "db:down": "docker compose down"
+    "db:down": "docker compose down",
+    "multi:up": "docker compose -f docker-compose.multi.yml up -d --build",
+    "multi:down": "docker compose -f docker-compose.multi.yml down -v",
+    "experiments": "bash scripts/experiments/run-all.sh"
   },
   "dependencies": {
     "pg": "^8.13.1"
