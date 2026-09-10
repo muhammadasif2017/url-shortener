@@ -58,7 +58,28 @@ left to be discovered.
    control over balancing. Multi-instance means a VPS running Compose, or a paid
    plan.
 
-## If revisited, the goal is
+## This was revisited
+
+It was run. Two instances behind nginx, every failure mode above caused
+deliberately, recorded in [`docs/multi-instance.md`](../multi-instance.md).
+
+Three of the five predictions were already handled by fixes that had landed
+since: the shared credential counter held at exactly its limit across both
+instances, a rolling restart dropped none of 51 requests, and the redirect limit
+doubled exactly as ADR 0007 says it does.
+
+The fourth found a real bug. Stopping the database did not degrade the service,
+it killed it: `pg` emits `error` on the pool when an idle client loses its
+connection, nothing listened, and an unhandled `error` event ends a Node
+process. Every database restart or failover had been killing the service since
+the project began, and no test could have caught it. That failure also made the
+liveness and readiness split pointless, since a process that has exited has no
+readiness to report.
+
+The decision itself stands. What changed is that it is now informed by
+observation rather than prediction.
+
+## If revisited, the goal was
 
 Learning the failure modes above by causing them deliberately: killing an
 instance mid-request, watching the rate limit double, observing the wrong

@@ -26,7 +26,7 @@ It is marked **Superseded** and the record that replaced it is named.
 | [0002](0002-in-memory-rate-limiting.md)               | Rate limiting in process memory                                  | Superseded by 0007 |
 | [0003](0003-anonymous-links-stay-ownerless.md)        | Anonymous links stay ownerless                                   | Superseded by 0006 |
 | [0004](0004-hash-the-client-ip.md)                    | Store a salted hash of the client IP, never the address          | Accepted           |
-| [0005](0005-single-process-no-load-balancer.md)       | One process, no load balancer of our own                         | Accepted           |
+| [0005](0005-single-process-no-load-balancer.md)       | One process, no load balancer of our own                         | Accepted, verified |
 | [0006](0006-require-a-session-to-create-a-link.md)    | Creating a link requires a session                               | Accepted           |
 | [0007](0007-shared-rate-limit-counter-in-postgres.md) | Count API rate limits in Postgres, redirects in memory           | Accepted           |
 | [0008](0008-split-liveness-from-readiness.md)         | Answer liveness and readiness separately                         | Accepted           |

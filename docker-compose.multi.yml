@@ -1,0 +1,97 @@
+# The multi-instance experiment stack.
+#
+# Separate from docker-compose.yml on purpose. That file is the development
+# database and nothing else; this one is an instrument, brought up to cause a
+# failure and torn down afterwards.
+#
+#   docker compose -f docker-compose.multi.yml up -d --build
+#   npm run experiments
+#   docker compose -f docker-compose.multi.yml down -v
+#
+# Two application instances behind nginx, sharing one database. That is the
+# smallest topology that can reproduce every failure mode recorded in
+# docs/adr/0005-single-process-no-load-balancer.md, and each of those failures
+# needs two instances specifically: one instance cannot disagree with itself.
+name: url-shortener-multi
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: urlshortener
+    # Deliberately not published to the host. The development database on 5433
+    # is a separate stack, and binding both would either collide or, worse,
+    # quietly let an experiment write to the wrong one.
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d urlshortener']
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  # Runs the migrations once, then exits. Both instances would otherwise race to
+  # apply them on startup, and the migration runner is not written to be safe
+  # against that.
+  migrate:
+    build: .
+    command:
+      ['node', '--experimental-strip-types', 'scripts/migrate.ts', 'up']
+    environment: &app-env
+      NODE_ENV: production
+      PORT: '3000'
+      BASE_URL: http://localhost:8080
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/urlshortener
+      # Off, and only because this database is a container on a private Compose
+      # network that offers no TLS at all. `NODE_ENV=production` otherwise turns
+      # verification on, and the first connection fails with "The server does not
+      # support SSL connections". Setting it here rather than weakening the
+      # default keeps the production default correct: a real deployment reaches
+      # its database over a network somebody else can see.
+      DATABASE_SSL: 'false'
+      # 1, because there is exactly one proxy in front of these instances.
+      # Read from the host environment so experiment 1 can bring the instances
+      # back up with 0 and show what a wrong hop count does. Defaults to the
+      # correct value, so an ordinary `up` needs no environment at all.
+      TRUST_PROXY_HOPS: '${TRUST_PROXY_HOPS:-1}'
+      IP_HASH_SALT: experiment-salt-not-a-secret-0000000000000000
+      RATE_LIMIT_MAX: '60'
+      RATE_LIMIT_WINDOW_MS: '60000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  app1:
+    build: .
+    environment:
+      <<: *app-env
+      # Named so a response can be attributed to the instance that produced it.
+      # Nothing in the service reads this; the experiments read it from
+      # `docker compose logs` to tell the two apart.
+      INSTANCE_NAME: app1
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    # No rate-limit namespace anywhere in this file, and that is load-bearing.
+    # The namespace option exists so tests do not share counters. Production
+    # leaves it empty, which is exactly what makes the shared-counter experiment
+    # meaningful: both instances must write to the same bucket.
+
+  app2:
+    build: .
+    environment:
+      <<: *app-env
+      INSTANCE_NAME: app2
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - '127.0.0.1:8080:80'
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - app1
+      - app2
