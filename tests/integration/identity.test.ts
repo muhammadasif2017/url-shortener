@@ -50,25 +50,33 @@ function post(path: string, body: unknown): Promise<Response> {
 }
 
 describe('POST /api/auth/register', () => {
-  it('creates an account and signs it in immediately', async () => {
+  it('creates an account and issues no session', async () => {
     const response = await post('/api/auth/register', {
       email: 'someone@example.com',
       password: PASSWORD,
     });
 
-    assert.equal(response.status, 201);
+    assert.equal(response.status, 202);
 
-    const body = (await response.json()) as { email: string; id: string };
-    assert.equal(body.email, 'someone@example.com');
-    assert.ok(body.id);
+    // No cookie, and that absence is the control. A session on this response
+    // would say the address had been free, which is the fact the identical body
+    // below exists to withhold.
+    assert.equal(response.headers.getSetCookie().length, 0);
 
-    // Registering and then having to sign in separately is friction with no
-    // security benefit: the caller just proved they know the password.
-    assert.ok(response.headers.getSetCookie().length > 0);
+    const body = (await response.json()) as { status: string };
+    assert.equal(body.status, 'accepted');
+
+    // The account is real: it can sign in.
+    const signedIn = await post('/api/auth/login', {
+      email: 'someone@example.com',
+      password: PASSWORD,
+    });
+    assert.equal(signedIn.status, 200);
   });
 
   it('sets a cookie JavaScript cannot read', async () => {
-    const response = await post('/api/auth/register', {
+    await post('/api/auth/register', { email: 'cookie@example.com', password: PASSWORD });
+    const response = await post('/api/auth/login', {
       email: 'cookie@example.com',
       password: PASSWORD,
     });
@@ -97,25 +105,39 @@ describe('POST /api/auth/register', () => {
       email: '  MixedCase@Example.COM ',
       password: PASSWORD,
     });
-    assert.equal(first.status, 201);
-    assert.equal(((await first.json()) as { email: string }).email, 'mixedcase@example.com');
+    assert.equal(first.status, 202);
+    await first.body?.cancel();
 
-    const second = await post('/api/auth/register', {
+    // The normalised spelling is what signs in, which is what proves the
+    // trimming and lowercasing happened. The response body no longer says.
+    const signedIn = await post('/api/auth/login', {
       email: 'mixedcase@example.com',
       password: PASSWORD,
     });
-    assert.equal(second.status, 409);
+    assert.equal(signedIn.status, 200);
   });
 
-  it('returns 409 for a duplicate address', async () => {
-    await post('/api/auth/register', { email: 'dup@example.com', password: PASSWORD });
-    const second = await post('/api/auth/register', {
+  it('answers a duplicate address exactly as it answers a free one', async () => {
+    // The enumeration oracle this closes: a distinct status told anyone who
+    // asked which addresses hold accounts, one request at a time.
+    const free = await post('/api/auth/register', { email: 'dup@example.com', password: PASSWORD });
+    const taken = await post('/api/auth/register', {
       email: 'dup@example.com',
       password: PASSWORD,
     });
 
-    assert.equal(second.status, 409);
-    assert.equal(((await second.json()) as ErrorBody).error.code, 'EMAIL_TAKEN');
+    assert.equal(free.status, taken.status);
+    assert.equal(taken.status, 202);
+    assert.deepEqual(await free.json(), await taken.json());
+    assert.equal(taken.headers.getSetCookie().length, 0);
+
+    // The existing account is untouched: its original password still works, so
+    // a second registration cannot be used to take an address over.
+    const original = await post('/api/auth/login', {
+      email: 'dup@example.com',
+      password: PASSWORD,
+    });
+    assert.equal(original.status, 200);
   });
 
   it('rejects a short password', async () => {
@@ -164,7 +186,7 @@ describe('POST /api/auth/register', () => {
       body: JSON.stringify({ email: 'charset@example.com', password: PASSWORD }),
     });
 
-    assert.equal(response.status, 201);
+    assert.equal(response.status, 202);
   });
 });
 

@@ -183,9 +183,9 @@ describe('POST /api/links', () => {
   it('does not store anything when validation fails', async () => {
     await createLink({ url: 'javascript:alert(1)', customSlug: 'rejected' });
 
-    // Checked through the read route rather than the listing, because listing
-    // is scoped to an authenticated owner and this request had no session.
-    const read = await server.fetch('/api/links/rejected');
+    const read = await server.fetch('/api/links/rejected', {
+      headers: { cookie: account.cookie },
+    });
     assert.equal(read.status, 404);
   });
 

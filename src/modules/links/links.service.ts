@@ -133,6 +133,34 @@ export async function getLink(slug: string): Promise<Link> {
 }
 
 /**
+ * Reads a link's metadata, for its owner only.
+ *
+ * The metadata route was open to anyone holding a slug. The destination it
+ * returns is public anyway, since following the link discloses it, but the
+ * expiry, the creation time and the confirmation that a slug is live were
+ * readable by anyone who guessed or harvested one.
+ *
+ * A link owned by someone else is refused with 403 rather than 404, which
+ * matches deletion. Answering 404 would hide the link's existence, and its
+ * existence is already public: the redirect route confirms it to anyone.
+ * Answering two different ways to the same question would be the inconsistency,
+ * not the disclosure.
+ *
+ * @param slug - The slug to read.
+ * @param userId - The account asking.
+ * @returns The link.
+ * @throws {AppError} 404 when no such slug exists, 403 when it belongs to
+ *   someone else.
+ */
+export async function getOwnedLink(slug: string, userId: string): Promise<Link> {
+  const link = await getLink(slug);
+  if (link.ownerId !== userId) {
+    throw new AppError('FORBIDDEN', 'That link belongs to someone else.', 403);
+  }
+  return link;
+}
+
+/**
  * Lists one user's links, newest first.
  *
  * Always scoped to an owner. There is no way to ask this function for every

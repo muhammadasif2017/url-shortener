@@ -109,11 +109,25 @@ export const identityRoutes: RouteTable = [
       const parsed = parseCredentials(context.body);
       if (!parsed.ok) throw AppError.validation(parsed.issues);
 
-      const { user, session } = await identityService.register(parsed.value);
-      audit('auth.register', { userId: user.id, clientIp: context.clientIp });
+      const user = await identityService.register(parsed.value);
 
-      return json(201, toUserResponse(user), {
-        'Set-Cookie': sessionCookie(session.id),
+      // The audit log records which of the two happened. It is written for an
+      // operator reconstructing an incident, not returned to the caller, so the
+      // asymmetry here costs nothing that the response is protecting.
+      if (user === undefined) {
+        audit('auth.register.duplicate', { clientIp: context.clientIp });
+      } else {
+        audit('auth.register', { userId: user.id, clientIp: context.clientIp });
+      }
+
+      // One answer for both cases, carrying no account details and no session.
+      // A 201 with a body would say the address was free; a 409 would say it was
+      // taken. Even a cookie on one path and not the other would say it, which
+      // is why registration no longer issues one at all.
+      return json(202, {
+        status: 'accepted',
+        message:
+          'If that address was not already registered, an account now exists for it. Sign in to continue.',
       });
     },
   },

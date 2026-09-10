@@ -142,21 +142,33 @@ describe('link administration requires authentication', () => {
     assert.equal(anonymous.status, 401);
     await anonymous.body?.cancel();
 
+    const email = `process-${Date.now()}@example.com`;
+    const password = 'a sufficiently long passphrase';
+
     const registered = await fetch(`${child.url}/api/auth/register`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        email: `process-${Date.now()}@example.com`,
-        password: 'a sufficiently long passphrase',
-      }),
+      body: JSON.stringify({ email, password }),
     });
 
-    assert.equal(registered.status, 201);
-    const setCookie = registered.headers
+    // 202 and no session: registration answers the same whether or not the
+    // address was free, so signing in is a separate call.
+    assert.equal(registered.status, 202);
+    assert.equal(registered.headers.getSetCookie().length, 0);
+    await registered.body?.cancel();
+
+    const signedIn = await fetch(`${child.url}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+
+    assert.equal(signedIn.status, 200);
+    const setCookie = signedIn.headers
       .getSetCookie()
       .find((header) => header.startsWith('session='));
     const cookie = (setCookie ?? '').split(';')[0] ?? '';
-    await registered.body?.cancel();
+    await signedIn.body?.cancel();
 
     const created = await fetch(`${child.url}/api/links`, {
       method: 'POST',

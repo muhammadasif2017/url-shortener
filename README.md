@@ -57,16 +57,17 @@ where `details` carries field-level problems for a validation failure.
 
 | Method | Path | Auth | What it does |
 |---|---|---|---|
-| `POST` | `/api/links` | optional | Creates a link. `201` with the slug and short URL |
+| `POST` | `/api/links` | required | Creates a link. `201` with the slug and short URL |
 | `GET` | `/:slug` | none | `302` to the destination. `404` unknown, `410` expired |
 | `HEAD` | `/:slug` | none | Same status and headers, no body |
-| `GET` | `/api/links/:slug` | none | The link's metadata, including an expiry in the past |
+| `GET` | `/api/links/:slug` | required | The link's metadata, including a past expiry. `403` for someone else's |
 | `GET` | `/api/links` | required | The caller's own links, newest first, cursor paginated |
 | `DELETE` | `/api/links/:slug` | required | `204`. `403` for someone else's link or an ownerless one |
 
 ```bash
 curl -X POST http://localhost:3000/api/links \
   -H 'Content-Type: application/json' \
+  -b 'session=YOUR_SESSION_COOKIE' \
   -d '{"url":"https://example.com/a/very/long/path"}'
 ```
 
@@ -83,15 +84,18 @@ curl -X POST http://localhost:3000/api/links \
 `customSlug` and `expiresAt` are optional. A slug is 7 base62 characters and is
 case-sensitive. Omitting `expiresAt` means the link never expires.
 
-Creating a link works without an account, and that link keeps a null owner
-forever: nobody can list, delete, or read statistics for it, because nobody can
-prove they created it.
+Creating a link requires an account, so every link has an owner and abuse is
+attributable. Following one never requires an account: a redirect that asked for
+a session would be useless to everyone the link was sent to.
+
+Links made before that rule existed keep a null owner forever. Nobody can list,
+delete, or read statistics for one, because nobody can prove they made it.
 
 ### Accounts
 
 | Method | Path | What it does |
 |---|---|---|
-| `POST` | `/api/auth/register` | Creates an account and signs it in. `409` `EMAIL_TAKEN` |
+| `POST` | `/api/auth/register` | Creates an account. Always `202`, never a session. Sign in next |
 | `POST` | `/api/auth/login` | Signs in. `401` on bad credentials |
 | `POST` | `/api/auth/logout` | Deletes the session row and clears the cookie |
 | `GET` | `/api/auth/me` | The current user, or `401` |
@@ -215,16 +219,20 @@ removed rather than left as a switch that could be turned back on.
 ## Status
 
 All five phases are complete: foundation, links, hardening, identity, and
-analytics. 327 tests pass and `npm run typecheck` is clean.
+analytics. 329 tests pass and `npm run typecheck` is clean.
 
 A threat model of the running service is in
-[`THREAT-MODEL.md`](THREAT-MODEL.md). Ten of its twelve findings are fixed; the
-two left open are recorded there with the reason.
+[`THREAT-MODEL.md`](THREAT-MODEL.md). All twelve of its findings are fixed.
 
-Two of those fixes change behaviour a deployment has to know about. Creating a
-link now requires a session, so an anonymous `POST /api/links` is a 401. And the
-migration that hashes session identifiers deletes every existing session, so the
-deploy that applies it signs every user out once.
+Four of those fixes change behaviour a client or a deployment has to know about:
+
+- Creating a link requires a session, so an anonymous `POST /api/links` is a `401`.
+- Reading a link's metadata requires the owner's session.
+- Registration always answers `202` and never issues a session, so a new account
+  signs in as a second call. It answers the same whether or not the address was
+  already taken, which is what stops it confirming who holds an account.
+- The migration that hashes session identifiers deletes every existing session,
+  so the deploy that applies it signs every user out once.
 
 The service is **not deployed**, deliberately. Criterion 19 in `SPEC.md` is the
 only one that requires a public URL, and running locally is enough for what this

@@ -43,6 +43,7 @@ export async function insertLink(
     readonly url?: string;
     readonly expiresAt?: Date;
     readonly createdAt?: Date;
+    readonly ownerId?: string;
   } = {},
 ): Promise<{ readonly id: string; readonly slug: string }> {
   const slug = overrides.slug ?? `t${Math.random().toString(36).slice(2, 8)}`;
@@ -57,10 +58,10 @@ export async function insertLink(
       : new Date(overrides.expiresAt.getTime() - 60_000));
 
   const result = await pool().query<{ id: string; slug: string }>(
-    `insert into links (slug, url, expires_at, created_at)
-     values ($1, $2, $3, $4)
+    `insert into links (slug, url, expires_at, created_at, owner_id)
+     values ($1, $2, $3, $4, $5)
      returning id, slug`,
-    [slug, url, overrides.expiresAt ?? null, createdAt],
+    [slug, url, overrides.expiresAt ?? null, createdAt, overrides.ownerId ?? null],
   );
 
   const row = result.rows[0];

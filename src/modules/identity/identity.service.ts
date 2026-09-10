@@ -10,32 +10,44 @@ import type { CredentialsInput, Session, User } from './identity.schema.ts';
 /** Business rules for accounts and sessions. */
 
 /**
- * Registers an account and signs it in.
+ * Registers an account, if the address is free.
  *
- * Registration issues a session immediately. Making someone register and then
- * sign in separately is friction with no security benefit, since they just
- * proved they know the password.
+ * No session is issued. Registration used to sign the caller straight in, which
+ * was pleasant and which is what makes enumeration unavoidable: a response that
+ * carries a session says the address was free, and one that does not says it was
+ * taken, whatever the status code claims. Signing in is now a second call, and
+ * it is the only call that produces a session.
+ *
+ * The cost is real and is a product decision, not a side effect: a new account
+ * takes two requests instead of one. What it buys is that registration stops
+ * being an oracle for which addresses hold accounts.
  *
  * @param input - Validated credentials.
- * @returns The user and their new session.
- * @throws {AppError} 409 when the address is already registered.
+ * @returns The new user, or `undefined` when the address was already taken. The
+ *   caller must answer identically either way; the distinction exists so the
+ *   audit log can record what actually happened.
  */
-export async function register(
-  input: CredentialsInput,
-): Promise<{ readonly user: User; readonly session: Session }> {
+export async function register(input: CredentialsInput): Promise<User | undefined> {
+  // Hashed before the insert is attempted, and on every path. An address that is
+  // already taken must cost the same scrypt run as one that is free, or the
+  // response time answers the question the response body refuses to.
   const passwordHash = await hashPassword(input.password);
 
-  let user: User;
   try {
-    user = await repository.insertUser(input.email, passwordHash);
+    return await repository.insertUser(input.email, passwordHash);
   } catch (error) {
     if (repository.isEmailConflict(error)) {
-      throw new AppError('EMAIL_TAKEN', 'That email address is already registered.', 409);
+      // Swallowed on purpose. The caller cannot distinguish this from success,
+      // which is the entire point: a distinct 409 confirmed which addresses hold
+      // accounts to anyone who cared to ask, one request at a time.
+      //
+      // Nothing is written and nothing is sent to the address, because there is
+      // no mail channel here. The owner of an existing account is unaffected:
+      // their password is untouched and their sessions are untouched.
+      return undefined;
     }
     throw error;
   }
-
-  return { user, session: await createSession(user.id) };
 }
 
 /**
