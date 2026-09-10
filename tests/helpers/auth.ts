@@ -24,10 +24,16 @@ export async function truncateUsers(): Promise<void> {
   await pool().query('truncate table users restart identity cascade');
 }
 
+/** The password every test account uses. */
+export const TEST_PASSWORD = 'a sufficiently long passphrase';
+
 /**
- * Registers a new account and returns its session cookie.
+ * Registers a new account and signs it in.
  *
- * Registration issues a session directly, so no separate sign-in is needed.
+ * Two requests, because registration deliberately issues no session. A response
+ * carrying a cookie would say the address was free and one without would say it
+ * was taken, so registration answers identically either way and signing in is a
+ * separate call.
  *
  * @param server - The running test server.
  * @param email - Address to register. Defaults to a unique one, so two accounts
@@ -38,18 +44,29 @@ export async function registerAccount(
   server: TestServer,
   email = `${randomBytes(6).toString('hex')}@example.com`,
 ): Promise<TestAccount> {
-  const response = await server.fetch('/api/auth/register', {
+  const registered = await server.fetch('/api/auth/register', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ email, password: 'a sufficiently long passphrase' }),
+    body: JSON.stringify({ email, password: TEST_PASSWORD }),
   });
 
-  if (response.status !== 201) {
-    throw new Error(`Registration failed with ${response.status}: ${await response.text()}`);
+  if (registered.status !== 202) {
+    throw new Error(`Registration failed with ${registered.status}: ${await registered.text()}`);
+  }
+  await registered.body?.cancel();
+
+  const signedIn = await server.fetch('/api/auth/login', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email, password: TEST_PASSWORD }),
+  });
+
+  if (signedIn.status !== 200) {
+    throw new Error(`Sign-in failed with ${signedIn.status}: ${await signedIn.text()}`);
   }
 
-  const cookie = extractCookie(response);
-  const body = (await response.json()) as { id: string };
+  const cookie = extractCookie(signedIn);
+  const body = (await signedIn.json()) as { id: string };
 
   return { email, cookie, userId: body.id };
 }

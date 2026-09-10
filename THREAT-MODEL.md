@@ -6,9 +6,9 @@ names the file and the line of code that produces it.
 
 The purpose of this document is to record where untrusted data enters the system, what an
 attacker would want from it, and which of those paths are currently unguarded. It is a
-design artifact first. Ten of its twelve findings have since been fixed, and each is marked
-where it appears. Two remain open by decision, not by oversight: findings 9 and 12, both of
-which trade a small disclosure against the public API contract.
+design artifact first. All twelve of its findings have since been fixed, across three
+passes, and each is marked where it appears. Four of the fixes change the public API, which
+is recorded here and in the README rather than left for a client to discover.
 
 ## 1. Trust boundaries
 
@@ -94,15 +94,29 @@ making the log the one place raw addresses are kept.
 
 ### Information disclosure
 
-Registration answers a duplicate address with a distinct `EMAIL_TAKEN` 409, while login
-answers everything with the same 401. The register path therefore confirms whether any
-given address holds an account. This is the usual tradeoff and may be accepted
-deliberately, but it should be an explicit decision rather than an accident of two
-different error paths.
+Registration answered a duplicate address with a distinct `EMAIL_TAKEN` 409 while login
+answered everything with the same 401, so the register path confirmed whether any given
+address held an account, one request at a time.
 
-`GET /api/links/:slug` requires no session and performs no ownership check, so anyone
-holding a slug can read that link's destination, expiry and creation time. Since the
-redirect already discloses the destination, the marginal leak is the metadata.
+**Fixed, and it cost a feature.** Registration now answers 202 with one body whichever case
+it hit, and issues no session at all. The session was the harder half: a response carrying
+a cookie says the address was free and one without says it was taken, whatever the status
+code claims, so the only way to answer identically was to stop signing people in at
+registration. Creating an account is two requests now. Both paths run one scrypt before the
+insert is attempted, so the response time does not answer the question either.
+
+The proper fix is a mail channel, where registration says "check your email" and the
+message differs rather than the response. There is no mailer in this service, and adding
+one to close a low finding would be the larger change.
+
+`GET /api/links/:slug` required no session and performed no ownership check, so anyone
+holding a slug could read that link's expiry and creation time. The destination was never
+the leak, since following the link discloses it.
+
+**Fixed.** Owner only. A link belonging to someone else is refused with 403 rather than
+404, matching deletion: hiding the link's existence would be pointless when the redirect
+route confirms it to anyone, and two different answers to one question is the real
+inconsistency.
 
 Session identifiers were stored exactly as they appear in the cookie. Read access to the
 `sessions` table, through a backup, a log, a replica or an injection in some future query,
@@ -235,10 +249,10 @@ database, and rotating it on a schedule, is what limits the damage.
 | 6 | Medium | ~~Destination URL is persisted unnormalized, from the raw input string~~ **Fixed.** `parseDestinationUrl` returns `parsed.href`, and the length cap is applied to it | `src/lib/validate.ts` |
 | 7 | Medium | ~~No per-account throttle or lockout, only per-address~~ **Fixed.** 20 failed sign-ins per account per hour, counting failures only | `src/modules/identity/identity.routes.ts` |
 | 8 | Medium | ~~Click history has no retention limit and no deletion path~~ **Fixed.** `CLICK_RETENTION_DAYS`, swept daily, default 90 | `src/modules/analytics/analytics.retention.ts` |
-| 9 | Low | Registration discloses whether an address is already registered | `src/modules/identity/identity.routes.ts` |
+| 9 | Low | ~~Registration discloses whether an address is already registered~~ **Fixed.** Register always answers 202 with one body and no session | `src/modules/identity/identity.routes.ts` |
 | 10 | Low | ~~No HSTS or `Referrer-Policy`, and no cache directive on authenticated JSON~~ **Fixed.** All three, plus `X-Frame-Options`; HSTS in production only | `src/http/respond.ts` |
 | 11 | Low | ~~No audit log for authentication or deletion events~~ **Fixed.** Registration, sign-in, sign-out, throttling, link creation and deletion | `src/lib/audit.ts` |
-| 12 | Low | `GET /api/links/:slug` exposes link metadata without a session | `src/modules/links/links.routes.ts` |
+| 12 | Low | ~~`GET /api/links/:slug` exposes link metadata without a session~~ **Fixed.** Owner only, 403 for anyone else, matching deletion | `src/modules/links/links.service.ts` |
 
 ## 6. What is already right
 
@@ -302,9 +316,15 @@ patches:
   a way to lock its owner out.
 - **Retention (finding 8), headers (finding 10), audit log (finding 11).**
 
-Two findings are open on purpose. Finding 9, where registration discloses that an address
-is taken, and finding 12, where link metadata is readable without a session. Both are small
-disclosures, and both would change the public API contract to close.
+A third pass closed the last two, findings 9 and 12, which had been left open because both
+change the public API contract. Registration now answers identically whether or not the
+address was taken, at the cost of no longer signing the caller in, and link metadata is
+readable by its owner only.
+
+Four API changes came out of all this, and a client written against the old service will
+hit every one: creating a link needs a session, reading a link's metadata needs the owner's
+session, registration returns 202 with no session, and there is no `EMAIL_TAKEN` response
+any more.
 
 One residual is worth stating rather than filing: the audit log records a hashed client
 address and an account id, and it is the same stream as every other log line. That is

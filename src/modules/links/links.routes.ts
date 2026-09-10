@@ -173,7 +173,9 @@ export const linkRoutes: RouteTable = [
     method: 'GET',
     path: '/api/links/:slug',
     async handle(context): Promise<RouteResponse> {
-      const link = await linkService.getLink(context.params['slug'] ?? '');
+      const userId = await identityService.requireUserId(readSessionId(context));
+      const link = await linkService.getOwnedLink(context.params['slug'] ?? '', userId);
+
       return json(200, toLinkResponse(link));
     },
   },

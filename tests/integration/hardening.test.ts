@@ -106,8 +106,10 @@ describe('shared rate limiting', () => {
         await response.body?.cancel();
       }
 
-      // Two allowed in total, not two each.
-      assert.deepEqual(statuses, [404, 404, 429, 429]);
+      // Two allowed in total, not two each. The allowed pair answers 401,
+      // because reading a link's metadata now requires a session; what this
+      // test cares about is which two requests reached a route at all.
+      assert.deepEqual(statuses, [401, 401, 429, 429]);
     } finally {
       await first.close();
       await second.close();

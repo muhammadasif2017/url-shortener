@@ -132,14 +132,19 @@ describe('account enumeration', () => {
 });
 
 describe('link metadata exposure', () => {
-  it('never returns the owner of a link', async () => {
-    const link = await insertLink();
+  it('never returns the owner or the row id of a link', async () => {
+    const owner = await registerAccount(server);
+    const link = await insertLink({ ownerId: owner.userId });
 
-    const response = await server.fetch(`/api/links/${link.slug}`);
+    const response = await server.fetch(`/api/links/${link.slug}`, {
+      headers: { cookie: owner.cookie },
+    });
     const body = (await response.json()) as Record<string, unknown>;
 
-    // This route is unauthenticated by design: it says no more than following
-    // the link already would. It must not say who created it.
+    // The reader is the owner, so the owner id would tell them nothing they do
+    // not know. It is absent anyway, because this shape is shared with the
+    // create and list responses and a field nobody needs is a field that leaks
+    // the first time one of those routes changes audience.
     assert.equal(response.status, 200);
     assert.ok(!('ownerId' in body));
     assert.ok(!('id' in body));

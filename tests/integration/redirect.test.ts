@@ -139,10 +139,13 @@ describe('GET /:slug', () => {
 });
 
 describe('GET /api/links/:slug', () => {
-  it('returns metadata', async () => {
-    await insertLink({ slug: 'meta', url: 'https://example.com/meta' });
+  it('returns metadata to the owner', async () => {
+    const owner = await registerAccount(server);
+    await insertLink({ slug: 'meta', url: 'https://example.com/meta', ownerId: owner.userId });
 
-    const response = await server.fetch('/api/links/meta');
+    const response = await server.fetch('/api/links/meta', {
+      headers: { cookie: owner.cookie },
+    });
 
     assert.equal(response.status, 200);
     const body = (await response.json()) as { slug: string; url: string };
@@ -150,21 +153,55 @@ describe('GET /api/links/:slug', () => {
     assert.equal(body.url, 'https://example.com/meta');
   });
 
+  it('requires a session', async () => {
+    const owner = await registerAccount(server);
+    await insertLink({ slug: 'private', ownerId: owner.userId });
+
+    assert.equal((await server.fetch('/api/links/private')).status, 401);
+  });
+
+  it('refuses a link belonging to another account', async () => {
+    // 403 rather than 404, matching deletion. Hiding the link's existence would
+    // be pointless: the redirect route confirms it to anyone who asks.
+    const owner = await registerAccount(server);
+    const stranger = await registerAccount(server);
+    await insertLink({ slug: 'theirs', ownerId: owner.userId });
+
+    const response = await server.fetch('/api/links/theirs', {
+      headers: { cookie: stranger.cookie },
+    });
+
+    assert.equal(response.status, 403);
+  });
+
   it('describes an expired link rather than refusing it', async () => {
     // This endpoint describes a link; it does not follow one. The same slug
     // gives 410 on the redirect route and 200 here.
-    await insertLink({ slug: 'gone', expiresAt: new Date(Date.now() - 1000) });
+    const owner = await registerAccount(server);
+    await insertLink({
+      slug: 'gone',
+      expiresAt: new Date(Date.now() - 1000),
+      ownerId: owner.userId,
+    });
 
     assert.equal((await server.fetch('/gone')).status, 410);
 
-    const response = await server.fetch('/api/links/gone');
+    const response = await server.fetch('/api/links/gone', {
+      headers: { cookie: owner.cookie },
+    });
     assert.equal(response.status, 200);
     const body = (await response.json()) as { expiresAt: string };
     assert.ok(new Date(body.expiresAt).getTime() < Date.now());
   });
 
   it('returns 404 for an unknown slug', async () => {
-    assert.equal((await server.fetch('/api/links/missing')).status, 404);
+    const owner = await registerAccount(server);
+
+    const response = await server.fetch('/api/links/missing', {
+      headers: { cookie: owner.cookie },
+    });
+
+    assert.equal(response.status, 404);
   });
 });
 
@@ -277,7 +314,10 @@ describe('DELETE /api/links/:slug', () => {
     assert.equal(await deleted.text(), '');
 
     assert.equal((await server.fetch('/doomed')).status, 404);
-    assert.equal((await server.fetch('/api/links/doomed')).status, 404);
+    assert.equal(
+      (await server.fetch('/api/links/doomed', { headers: authHeaders(account.cookie) })).status,
+      404,
+    );
   });
 
   it('returns 403 when the link belongs to someone else', async () => {
@@ -296,8 +336,11 @@ describe('DELETE /api/links/:slug', () => {
     assert.equal(response.status, 403);
     assert.equal(((await response.json()) as ErrorBody).error.code, 'FORBIDDEN');
 
-    // And the link survives.
-    assert.equal((await server.fetch('/api/links/private')).status, 200);
+    // And the link survives, as its owner can still see.
+    assert.equal(
+      (await server.fetch('/api/links/private', { headers: authHeaders(owner.cookie) })).status,
+      200,
+    );
   });
 
   it('refuses to delete an anonymous link, which nobody can prove they own', async () => {

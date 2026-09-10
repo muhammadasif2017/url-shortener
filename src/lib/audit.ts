@@ -19,6 +19,8 @@ import { log } from './logger.ts';
 /** Security-relevant actions worth being able to reconstruct later. */
 export type AuditEvent =
   | 'auth.register'
+  /** A registration naming an address that already has an account. */
+  | 'auth.register.duplicate'
   | 'auth.login.succeeded'
   | 'auth.login.failed'
   | 'auth.login.throttled'
