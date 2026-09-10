@@ -95,6 +95,16 @@ jobs:
           RATE_LIMIT_WINDOW_MS=60000
           ENV
 
+      # Runs before the gates that take a database, so a known-vulnerable
+      # package is reported in seconds rather than after the suite.
+      #
+      # `--audit-level=high` rather than the default: a low-severity advisory in
+      # a development-only transitive package is not worth failing a build over,
+      # and a gate that fails for reasons nobody acts on is a gate people learn
+      # to bypass. High and critical are the ones that warrant stopping.
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
+
       - name: Type check
         run: npm run typecheck
 

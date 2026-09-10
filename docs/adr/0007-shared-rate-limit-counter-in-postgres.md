@@ -39,6 +39,12 @@ minutes, against sixty per minute for the rest.
   protect that database from writes would be self-defeating. A per-instance cap
   still bounds the damage at instances times the cap, which is the property that
   matters there.
+- The health endpoints are exempt from both counters. They are not `/api/`
+  paths, so they originally fell into the in-memory counter with the redirect
+  path, which meant a monitor and real redirect traffic from one address spent
+  from the same 600 per minute. Neither endpoint is worth flooding: liveness
+  touches nothing outside the process, and readiness runs `select 1` under a
+  two-second timeout.
 - The limiter fails closed. If the counter cannot be read, the request is
   refused with `503`. The counter lives in the same database every route behind
   that point needs, so an unreadable counter means a database that could not

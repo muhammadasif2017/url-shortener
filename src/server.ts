@@ -159,6 +159,33 @@ function isSharedRateLimited(pathname: string): boolean {
 }
 
 /**
+ * Whether a path is exempt from every limiter.
+ *
+ * Only the health endpoints. A platform polls these far more often than any
+ * human uses the API, and they were previously counted against the redirect
+ * path's in-process limiter, because that limiter takes everything outside
+ * `/api/`. Sharing that bucket has the failure backwards: a monitor and real
+ * redirect traffic arriving from one address, which is what a NAT or a
+ * single-address proxy produces, spend from the same 600 per minute, so either
+ * can starve the other. A rate-limited health check then reports the service as
+ * unhealthy under its own monitoring, and the orchestrator acts on that.
+ *
+ * The exemption is safe because neither endpoint is worth flooding. Liveness
+ * touches nothing outside the process, and readiness runs `select 1` under a
+ * two-second timeout, which is cheaper than the redirect the limiter exists to
+ * meter.
+ *
+ * `/healthy` is not exempt, and must not be: it is one segment, so it is a slug,
+ * and it belongs to the redirect path like any other.
+ *
+ * @param pathname - The request path.
+ * @returns `true` when no limiter counts this request.
+ */
+function isRateLimitExempt(pathname: string): boolean {
+  return pathname === '/health' || pathname.startsWith('/health/');
+}
+
+/**
  * Rejects a promise that takes too long.
  *
  * A query against an unreachable database can hang for as long as the network
@@ -200,6 +227,16 @@ export type ServerOptions = {
   readonly rateLimit?: { readonly max: number; readonly windowMs: number };
   /** Overrides for the stricter credential-endpoint limit. */
   readonly authRateLimit?: { readonly max: number; readonly windowMs: number };
+  /**
+   * Overrides for the redirect path's in-process limit.
+   *
+   * Present for the same reason as the others, and for one more: the real limit
+   * is 600 per minute, and a test that had to send 601 requests to reach it
+   * would be slow enough that nobody would write it. Without this the exemption
+   * for the health endpoints could only be asserted against the API limiter,
+   * which was never the bucket they fell into.
+   */
+  readonly redirectRateLimit?: { readonly max: number; readonly windowMs: number };
   /**
    * Prefix applied to every shared rate-limit bucket this server writes.
    *
@@ -248,8 +285,8 @@ export function createAppServer(
   // The redirect path's limiter, and the only one still counting in memory. See
   // `isSharedRateLimited` for why this one does not belong in the database.
   const redirectRateLimiter = createRateLimiter({
-    max: REDIRECT_RATE_LIMIT_MAX,
-    windowMs: REDIRECT_RATE_LIMIT_WINDOW_MS,
+    max: options.redirectRateLimit?.max ?? REDIRECT_RATE_LIMIT_MAX,
+    windowMs: options.redirectRateLimit?.windowMs ?? REDIRECT_RATE_LIMIT_WINDOW_MS,
   });
 
   const server = createServer((request, response) => {
@@ -329,6 +366,8 @@ export function createAppServer(
       pathname: string,
       address: string,
     ): Promise<AppError | undefined> {
+      if (isRateLimitExempt(pathname)) return undefined;
+
       if (isSharedRateLimited(pathname)) {
         const credential = CREDENTIAL_PATHS.has(pathname);
         const limit = credential ? authLimit : apiLimit;
@@ -356,7 +395,9 @@ export function createAppServer(
         return decision.allowed ? undefined : tooManyRequests(decision.retryAfterSeconds);
       }
 
-      // Everything else is the redirect path, counted in this process.
+      // Everything left is the redirect path, counted in this process. The
+      // health endpoints used to land here too, which is what
+      // `isRateLimitExempt` above now prevents.
       const decision = redirectRateLimiter.check(address);
       return decision.allowed ? undefined : tooManyRequests(decision.retryAfterSeconds);
     }

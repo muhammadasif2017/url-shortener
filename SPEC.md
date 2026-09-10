@@ -614,17 +614,39 @@ Normalisation, because the same client must not occupy two keys:
 
 ### Rate limiting
 
-Fixed window, in process memory, keyed by resolved client IP.
+Fixed window, keyed by resolved client IP. Two counters, and which one applies
+is decided by the path.
 
-- Default limit is `RATE_LIMIT_MAX` requests per `RATE_LIMIT_WINDOW_MS`,
-  defaulting to 60 per 60 seconds.
-- `POST /api/auth/login` and `POST /api/auth/register` get a much lower limit,
-  10 per 15 minutes, because each one runs `scrypt`. Without this, login is a
-  CPU amplification attack against a single-threaded service.
-- `GET /:slug` is **not** rate limited. It is the product, and a shared office
-  behind one address must not be able to exhaust it for everybody.
-- Exceeding the limit returns `429` in the standard error shape with code
+| Paths                                      | Counted where              | Limit                                                                  |
+| ------------------------------------------ | -------------------------- | ---------------------------------------------------------------------- |
+| `/api/auth/login`, `/api/auth/register`    | `rate_limit_windows` table | 10 per 15 minutes                                                      |
+| Everything else under `/api/`              | `rate_limit_windows` table | `RATE_LIMIT_MAX` per `RATE_LIMIT_WINDOW_MS`, default 60 per 60 seconds |
+| `/health`, `/health/live`, `/health/ready` | Nowhere. Exempt            | None                                                                   |
+| `GET /:slug`, and anything else            | Process memory             | 600 per 60 seconds, per instance                                       |
+
+- The credential endpoints are far stricter because each attempt runs `scrypt`.
+  Without that, sign-in is a CPU amplification attack against a single-threaded
+  service.
+- The API counters live in the database so the limit is global across instances.
+  A credential limit that multiplies by instance count is not a limit. See
+  [ADR 0007](docs/adr/0007-shared-rate-limit-counter-in-postgres.md).
+- The redirect path stays in process memory deliberately. What its limit
+  protects is the database from click-write amplification, and paying a
+  synchronous round trip to that database in order to protect it would be
+  self-defeating.
+- `GET /:slug` was originally specified as not limited at all, on the grounds
+  that it is the product and a shared office behind one address must not exhaust
+  it for everybody. That is still the reasoning behind the generous 600, but
+  unmetered was wrong: every redirect writes a click row, so one host with one
+  valid slug could drive unbounded write volume.
+- The health endpoints are exempt from both. They previously fell into the
+  redirect counter, because that counter takes everything outside `/api/`, so a
+  monitor and real traffic from one address could starve each other. `/healthy`
+  is **not** exempt: it is one segment, so it is a slug.
+- Exceeding a limit returns `429` in the standard error shape with code
   `RATE_LIMITED`, and a `Retry-After` header in seconds.
+- The shared counter fails closed. If it cannot be read, the request is refused
+  with `503`.
 
 Eviction is mandatory, not a refinement. A `Map` keyed by client IP with no
 eviction grows without bound, and any distributed scan against a public URL
