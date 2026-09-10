@@ -30,10 +30,13 @@ const MAX_SLUG_ATTEMPTS = 5;
  * the violation it raises is translated here.
  *
  * @param input - Already-validated request input.
- * @param ownerId - Who is creating it, or `undefined` for an anonymous caller.
- *   Anonymous creation is deliberately still allowed: it is the product's
- *   simplest useful behaviour, and the trade the creator accepts is that an
- *   ownerless link cannot later be listed or deleted through the API.
+ * @param ownerId - Who is creating it. Optional in this signature and required
+ *   in practice: the only caller, `POST /api/links`, resolves a session before
+ *   reaching here, so anonymous creation is no longer possible over HTTP. The
+ *   parameter stays optional because rows created before that rule have a null
+ *   `owner_id` and are never adopted, and because a future script or backfill
+ *   may legitimately insert one. An ownerless link still redirects and can never
+ *   be listed, read, or deleted through the API.
  * @returns The stored link.
  * @throws {AppError} 400 when the slug is reserved, 409 when it is taken, 503
  *   when five generated slugs collide in a row.

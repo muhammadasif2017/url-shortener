@@ -330,3 +330,34 @@ One residual is worth stating rather than filing: the audit log records a hashed
 address and an account id, and it is the same stream as every other log line. That is
 enough to reconstruct an incident and not enough to satisfy an auditor who expects an
 append-only trail with its own retention.
+
+## 9. Changes since this model was written
+
+None of these came from a finding here. They are recorded so that the model and
+the running service do not describe different systems.
+
+- **Every request now carries a correlation id.** It is echoed as
+  `X-Request-Id` and written to every log and audit line for that request, which
+  closes most of the residual noted above: an audit line can now be joined to
+  everything else the same call did. It is still one stream, and still not an
+  append-only trail with its own retention. An inbound id is adopted only when it
+  is at most 128 characters of unreserved URL characters, because the value
+  reaches both a response header and a log line, and a value carrying CR or LF
+  is response splitting. See
+  [ADR 0009](docs/adr/0009-thread-the-request-id-explicitly.md).
+- **Liveness and readiness are answered separately.** `/health/live` touches
+  nothing outside the process; `/health/ready` and `/health` query the database.
+  This is an availability change rather than a confidentiality one: a single
+  database-backed probe answers a database outage with a restart loop across
+  every instance, at the moment the database is least able to absorb
+  reconnections. See
+  [ADR 0008](docs/adr/0008-split-liveness-from-readiness.md).
+- **The API surface is now machine-readable and checked.** `openapi.json`
+  describes every route, and a test fails the build if a route is added or
+  removed without it. An undocumented endpoint is a smaller class of surprise
+  than it was.
+- **Dependencies grew.** Three devDependencies became six, pulling in 108
+  transitive packages, all of them development-only and none shipped in the
+  production image, which is still built with `npm ci --omit=dev
+--ignore-scripts`. The supply-chain exposure is to the build, not to the
+  running service.

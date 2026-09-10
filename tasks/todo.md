@@ -1,5 +1,11 @@
 # Task List: URL Shortener API
 
+> **This is a build log, not current behaviour.** Every task below is finished.
+> It is kept because the verification notes record what was found wrong along the
+> way, which is the most useful part of it. For how the service behaves now, read
+> `README.md`, `openapi.json`, and `docs/request-lifecycle.md`. For why it is
+> built this way, read `docs/adr/`.
+
 Ordered by dependency, not by importance. Work top to bottom.
 Plan: `tasks/plan.md`. Specs: `SPEC.md` and the three module specs.
 
